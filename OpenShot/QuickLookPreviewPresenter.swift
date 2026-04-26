@@ -9,36 +9,36 @@ import AppKit
 import QuickLookUI
 
 @MainActor
-final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource {
     static let shared = QuickLookPreviewPresenter()
     
     private var previewURL: NSURL?
-    private weak var sourceView: NSView?
-    private var sourceImage: NSImage?
     
     static var isShown: Bool {
         QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
     }
     
-    static func show(url: URL, sourceView: NSView?, sourceImage: NSImage?) {
-        shared.show(url: url, sourceView: sourceView, sourceImage: sourceImage)
+    static func show(url: URL) {
+        shared.show(url: url)
     }
     
     static func dismiss() {
         shared.dismiss()
     }
     
-    private func show(url: URL, sourceView: NSView?, sourceImage: NSImage?) {
+    private func show(url: URL) {
         previewURL = url as NSURL
-        self.sourceView = sourceView
-        self.sourceImage = sourceImage
         
         guard let panel = QLPreviewPanel.shared() else { return }
         panel.dataSource = self
-        panel.delegate = self
-        panel.reloadData()
+        panel.delegate = nil
         panel.currentPreviewItemIndex = 0
-        panel.makeKeyAndOrderFront(nil)
+        panel.reloadData()
+        if panel.isVisible {
+            panel.refreshCurrentPreviewItem()
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
     }
     
     private func dismiss() {
@@ -55,28 +55,6 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     nonisolated func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
         MainActor.assumeIsolated {
             previewURL
-        }
-    }
-    
-    nonisolated func previewPanel(_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: QLPreviewItem!) -> NSRect {
-        MainActor.assumeIsolated {
-            guard let sourceView,
-                  let window = sourceView.window else {
-                return .zero
-            }
-            
-            let rectInWindow = sourceView.convert(sourceView.bounds, to: nil)
-            return window.convertToScreen(rectInWindow)
-        }
-    }
-    
-    nonisolated func previewPanel(_ panel: QLPreviewPanel!, transitionImageFor item: QLPreviewItem!, contentRect: UnsafeMutablePointer<NSRect>!) -> Any! {
-        MainActor.assumeIsolated {
-            if let sourceImage {
-                contentRect?.pointee = NSRect(origin: .zero, size: sourceImage.size)
-            }
-            
-            return sourceImage
         }
     }
 }

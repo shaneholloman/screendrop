@@ -20,7 +20,6 @@ struct PreviewWindowView: View {
     @State private var hideView = false
     @State private var keyMonitor: Any?
     @State private var globalKeyMonitor: Any?
-    @State private var popoverAnchorView: NSView?
     @State private var autoSavedURL: URL?
     @Environment(\.dismiss) private var dismissWindow
     
@@ -44,7 +43,6 @@ struct PreviewWindowView: View {
                     }
                     .shadow(color: .black.opacity(0.5), radius: 30, x: 0, y: 12)
                     .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 4)
-                    .background(PopoverAnchorView(anchorView: $popoverAnchorView))
                     .opacity(hideView ? 0 : 1)
                     .draggable(url) {
                         Image(nsImage: previewImage)
@@ -240,11 +238,7 @@ struct PreviewWindowView: View {
     
     private func openLargePreview() {
         guard let url else { return }
-        QuickLookPreviewPresenter.show(
-            url: url,
-            sourceView: popoverAnchorView,
-            sourceImage: previewImage
-        )
+        QuickLookPreviewPresenter.show(url: url)
     }
     
     private func handlePreviewKey(_ event: NSEvent) -> Bool {
@@ -254,9 +248,7 @@ struct PreviewWindowView: View {
         }
         
         if event.keyCode == 49, isHovered, previewImage != nil {
-            DispatchQueue.main.async {
-                openLargePreview()
-            }
+            openLargePreview()
             return true
         }
         
@@ -269,27 +261,5 @@ struct PreviewWindowView: View {
     
     private var cornerRadius: CGFloat {
         16
-    }
-}
-
-private struct PopoverAnchorView: NSViewRepresentable {
-    @Binding var anchorView: NSView?
-    
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            anchorView = view
-        }
-        return view
-    }
-    
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            anchorView = nsView
-        }
-    }
-    
-    static func dismantleNSView(_ nsView: NSView, coordinator: ()) {
-        QuickLookPreviewPresenter.dismiss()
     }
 }
