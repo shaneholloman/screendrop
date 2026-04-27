@@ -52,9 +52,11 @@ struct AnnotationEditorWindow: View {
         .onDeleteCommand {
             model.deleteSelectedAnnotation()
         }
-        .background(DeleteKeyHandler {
-            model.deleteSelectedAnnotation()
-        })
+        .background(AnnotationKeyCommandHandler(
+            onDelete: model.deleteSelectedAnnotation,
+            onUndo: model.undo,
+            onRedo: model.redo
+        ))
     }
 
     private var toolbar: some View {
@@ -157,8 +159,10 @@ private final class AnnotationEditorModel {
     var selectedSwatch: AnnotationSwatch = .red
     var strokeWidth: CGFloat = 4
     var errorMessage: String?
+    private(set) var statePath = AnnotationToolState.idle.path(for: .rectangle)
 
     private var interaction: AnnotationInteraction?
+    private var history = AnnotationHistory()
     private let minimumItemSize: CGFloat = 0.006
 
     func load(url: URL?, dismiss: DismissAction) {
@@ -174,6 +178,8 @@ private final class AnnotationEditorModel {
         draftItem = nil
         selectedItemID = nil
         interaction = nil
+        history.reset(to: items)
+        statePath = AnnotationToolState.idle.path(for: selectedTool)
         errorMessage = nil
 
         if previewImage == nil || imageSize == .zero {
@@ -185,6 +191,7 @@ private final class AnnotationEditorModel {
         guard let point = normalizedPoint(location, in: imageFrame, clamped: false) else {
             selectedItemID = nil
             interaction = nil
+            statePath = AnnotationToolState.idle.path(for: selectedTool)
             return
         }
 
@@ -192,7 +199,9 @@ private final class AnnotationEditorModel {
            let resizeHandle = hitTestResizeHandle(point, in: imageFrame, item: selectedItem) {
             applyStyleFromItem(selectedItem)
             draftItem = nil
+            history.push(items)
             interaction = .resizing(id: selectedItem.id, handle: resizeHandle, originalItem: selectedItem)
+            statePath = AnnotationToolState.resizing.path(for: selectedTool)
             return
         }
 
@@ -200,22 +209,26 @@ private final class AnnotationEditorModel {
             selectedItemID = item.id
             applyStyleFromItem(item)
             draftItem = nil
+            history.push(items)
 
             if let resizeHandle = hitTestResizeHandle(point, in: imageFrame, item: item) {
                 interaction = .resizing(id: item.id, handle: resizeHandle, originalItem: item)
+                statePath = AnnotationToolState.resizing.path(for: selectedTool)
             } else {
                 interaction = .moving(id: item.id, startPoint: point, originalItem: item)
+                statePath = AnnotationToolState.translating.path(for: selectedTool)
             }
         } else {
             selectedItemID = nil
             draftItem = AnnotationItem(
                 tool: selectedTool,
                 rect: CGRect(origin: point, size: .zero),
-                points: selectedTool == .freehand ? [point] : [],
+                points: selectedTool.usesEndpoints ? [point, point] : [],
                 swatch: selectedSwatch,
                 strokeWidth: strokeWidth
             )
             interaction = .drawing(startPoint: point)
+            statePath = AnnotationToolState.drawing.path(for: selectedTool)
         }
     }
 
@@ -234,8 +247,7 @@ private final class AnnotationEditorModel {
             updateItem(id: id, item: originalItem.offsetBy(clampedDelta(delta, for: originalItem.bounds)))
 
         case .resizing(let id, let handle, let originalItem):
-            let newBounds = resizedRect(originalItem.bounds, handle: handle, to: point)
-            updateItem(id: id, item: originalItem.resized(to: newBounds))
+            updateItem(id: id, item: resizedItem(originalItem, handle: handle, to: point))
         }
     }
 
@@ -255,9 +267,11 @@ private final class AnnotationEditorModel {
             guard let item = draftItem,
                   item.isRenderable(minimumSize: minimumItemSize) else {
                 draftItem = nil
+                statePath = AnnotationToolState.idle.path(for: selectedTool)
                 return
             }
 
+            history.push(items)
             items.append(item)
             selectedItemID = item.id
             draftItem = nil
@@ -265,12 +279,15 @@ private final class AnnotationEditorModel {
         case .moving, .resizing:
             break
         }
+
+        statePath = AnnotationToolState.idle.path(for: selectedTool)
     }
 
     func setSwatch(_ swatch: AnnotationSwatch) {
         selectedSwatch = swatch
 
         if let selectedItemID {
+            history.push(items)
             updateItem(id: selectedItemID) { item in
                 item.swatch = swatch
             }
@@ -286,6 +303,7 @@ private final class AnnotationEditorModel {
         self.strokeWidth = strokeWidth
 
         if let selectedItemID {
+            history.push(items)
             updateItem(id: selectedItemID) { item in
                 item.strokeWidth = strokeWidth
             }
@@ -300,24 +318,42 @@ private final class AnnotationEditorModel {
     func deleteSelectedAnnotation() {
         guard let selectedItemID else { return }
 
+        history.push(items)
         items.removeAll { $0.id == selectedItemID }
         self.selectedItemID = nil
         interaction = nil
+        draftItem = nil
+        statePath = AnnotationToolState.idle.path(for: selectedTool)
+    }
+
+    func undo() {
+        guard let restoredItems = history.undo(current: items) else { return }
+
+        items = restoredItems
+        selectedItemID = nil
+        draftItem = nil
+        interaction = nil
+        statePath = AnnotationToolState.idle.path(for: selectedTool)
+    }
+
+    func redo() {
+        guard let restoredItems = history.redo(current: items) else { return }
+
+        items = restoredItems
+        selectedItemID = nil
+        draftItem = nil
+        interaction = nil
+        statePath = AnnotationToolState.idle.path(for: selectedTool)
     }
 
     private func updateDraftItem(from startPoint: CGPoint, to point: CGPoint) {
         guard var draftItem else { return }
 
-        if selectedTool == .freehand {
-            if draftItem.points.last.map({ distance(from: $0, to: point) > 0.003 }) != false {
-                draftItem.points.append(point)
-            }
+        if selectedTool.usesEndpoints {
+            draftItem.points = [startPoint, point]
             draftItem.rect = boundingRect(for: draftItem.points)
         } else {
             draftItem.rect = rect(from: startPoint, to: point)
-            if selectedTool == .line {
-                draftItem.points = [startPoint, point]
-            }
         }
 
         self.draftItem = draftItem
@@ -325,7 +361,7 @@ private final class AnnotationEditorModel {
 
     private func hitTest(_ point: CGPoint) -> AnnotationItem? {
         items.reversed().first { item in
-            item.bounds.insetBy(dx: -0.008, dy: -0.008).contains(point)
+            item.hitTest(point, tolerance: 0.01)
         }
     }
 
@@ -342,8 +378,15 @@ private final class AnnotationEditorModel {
         let xTolerance = 12 / max(imageFrame.width, 1)
         let yTolerance = 12 / max(imageFrame.height, 1)
 
-        return AnnotationResizeHandle.allCases.first { handle in
-            let corner = handle.corner(in: item.bounds)
+        if item.tool.usesEndpoints {
+            return AnnotationResizeHandle.endpointCases.first { handle in
+                guard let endpoint = handle.point(in: item) else { return false }
+                return abs(point.x - endpoint.x) <= xTolerance && abs(point.y - endpoint.y) <= yTolerance
+            }
+        }
+
+        return AnnotationResizeHandle.boxCases.first { handle in
+            guard let corner = handle.corner(in: item.bounds) else { return false }
             return abs(point.x - corner.x) <= xTolerance && abs(point.y - corner.y) <= yTolerance
         }
     }
@@ -383,11 +426,16 @@ private final class AnnotationEditorModel {
         ).standardized
     }
 
-    private func resizedRect(
-        _ originalRect: CGRect,
+    private func resizedItem(
+        _ originalItem: AnnotationItem,
         handle: AnnotationResizeHandle,
         to point: CGPoint
-    ) -> CGRect {
+    ) -> AnnotationItem {
+        if originalItem.tool.usesEndpoints {
+            return originalItem.withEndpoint(handle, movedTo: point)
+        }
+
+        let originalRect = originalItem.bounds
         let anchor = handle.oppositeCorner(in: originalRect)
         let constrainedPoint = handle.constrainedPoint(
             point,
@@ -395,7 +443,7 @@ private final class AnnotationEditorModel {
             minimumSize: minimumItemSize
         )
 
-        return rect(from: anchor, to: constrainedPoint)
+        return originalItem.resized(to: rect(from: anchor, to: constrainedPoint))
     }
 
     private func clampedDelta(_ delta: CGPoint, for bounds: CGRect) -> CGPoint {
@@ -423,9 +471,6 @@ private final class AnnotationEditorModel {
         }
     }
 
-    private func distance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
-        hypot(lhs.x - rhs.x, lhs.y - rhs.y)
-    }
 }
 
 private enum AnnotationInteraction {
@@ -434,13 +479,65 @@ private enum AnnotationInteraction {
     case resizing(id: AnnotationItem.ID, handle: AnnotationResizeHandle, originalItem: AnnotationItem)
 }
 
+private enum AnnotationToolState: String {
+    case idle
+    case drawing
+    case translating
+    case resizing
+
+    func path(for tool: AnnotationTool) -> String {
+        "root.\(tool.rawValue).\(rawValue)"
+    }
+}
+
+private struct AnnotationHistory {
+    private var undoStack: [[AnnotationItem]] = []
+    private var redoStack: [[AnnotationItem]] = []
+
+    mutating func reset(to items: [AnnotationItem]) {
+        undoStack = []
+        redoStack = []
+    }
+
+    mutating func push(_ items: [AnnotationItem]) {
+        guard undoStack.last != items else { return }
+
+        undoStack.append(items)
+        redoStack.removeAll()
+    }
+
+    mutating func undo(current: [AnnotationItem]) -> [AnnotationItem]? {
+        guard let previous = undoStack.popLast() else { return nil }
+
+        redoStack.append(current)
+        return previous
+    }
+
+    mutating func redo(current: [AnnotationItem]) -> [AnnotationItem]? {
+        guard let next = redoStack.popLast() else { return nil }
+
+        undoStack.append(current)
+        return next
+    }
+}
+
 private enum AnnotationResizeHandle: CaseIterable {
     case topLeft
     case topRight
     case bottomLeft
     case bottomRight
+    case start
+    case end
 
-    func corner(in rect: CGRect) -> CGPoint {
+    static var boxCases: [AnnotationResizeHandle] {
+        [.topLeft, .topRight, .bottomLeft, .bottomRight]
+    }
+
+    static var endpointCases: [AnnotationResizeHandle] {
+        [.start, .end]
+    }
+
+    func corner(in rect: CGRect) -> CGPoint? {
         switch self {
         case .topLeft:
             CGPoint(x: rect.minX, y: rect.minY)
@@ -450,6 +547,8 @@ private enum AnnotationResizeHandle: CaseIterable {
             CGPoint(x: rect.minX, y: rect.maxY)
         case .bottomRight:
             CGPoint(x: rect.maxX, y: rect.maxY)
+        case .start, .end:
+            nil
         }
     }
 
@@ -463,6 +562,8 @@ private enum AnnotationResizeHandle: CaseIterable {
             CGPoint(x: rect.maxX, y: rect.minY)
         case .bottomRight:
             CGPoint(x: rect.minX, y: rect.minY)
+        case .start, .end:
+            .zero
         }
     }
 
@@ -476,6 +577,19 @@ private enum AnnotationResizeHandle: CaseIterable {
             CGPoint(x: min(point.x, anchor.x - minimumSize), y: max(point.y, anchor.y + minimumSize))
         case .bottomRight:
             CGPoint(x: max(point.x, anchor.x + minimumSize), y: max(point.y, anchor.y + minimumSize))
+        case .start, .end:
+            point
+        }
+    }
+
+    func point(in item: AnnotationItem) -> CGPoint? {
+        switch self {
+        case .start:
+            item.points.first
+        case .end:
+            item.points.last
+        case .topLeft, .topRight, .bottomLeft, .bottomRight:
+            nil
         }
     }
 }
@@ -510,7 +624,7 @@ private struct AnnotationCanvas: View {
                     AnnotationItemView(
                         item: draftItem,
                         imageFrame: imageFrame,
-                        isSelected: true
+                        isSelected: false
                     )
                 }
             }
@@ -564,18 +678,21 @@ private struct AnnotationItemView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            itemPath
-                .fill(fillStyle)
-            itemPath
-                .stroke(item.swatch.color, style: StrokeStyle(lineWidth: item.tool.isFilledShape ? 0 : item.strokeWidth, lineCap: .round, lineJoin: .round))
+            if item.tool.isFilledShape {
+                itemPath
+                    .fill(fillStyle)
+            } else {
+                itemPath
+                    .stroke(item.swatch.color, style: StrokeStyle(lineWidth: item.strokeWidth, lineCap: .round, lineJoin: .round))
+            }
+
+            if let arrowHeadPath {
+                arrowHeadPath
+                    .fill(item.swatch.color)
+            }
 
             if isSelected {
-                SelectionFrame()
-                    .frame(
-                        width: max(viewBounds.width + selectionOutset * 2, 18),
-                        height: max(viewBounds.height + selectionOutset * 2, 18)
-                    )
-                    .position(x: viewBounds.midX, y: viewBounds.midY)
+                selectionOverlay
             }
         }
         .allowsHitTesting(false)
@@ -591,28 +708,78 @@ private struct AnnotationItemView: View {
         case .ellipse:
             return Path(ellipseIn: rect)
 
-        case .line:
+        case .line, .arrow:
             var path = Path()
-            let points = item.points.map(viewPoint)
-            if let first = points.first {
-                path.move(to: first)
-                points.dropFirst().forEach { path.addLine(to: $0) }
-            }
-            return path
-
-        case .freehand:
-            var path = Path()
-            let points = item.points.map(viewPoint)
-            if let first = points.first {
-                path.move(to: first)
-                points.dropFirst().forEach { path.addLine(to: $0) }
+            if let start = endpointViewPoints.first,
+               let end = endpointViewPoints.last {
+                path.move(to: start)
+                path.addLine(to: end)
             }
             return path
         }
     }
 
     private var fillStyle: Color {
-        item.tool.isFilledShape ? item.swatch.color.opacity(0.78) : .clear
+        item.tool.isFilledShape ? item.swatch.color : .clear
+    }
+
+    @ViewBuilder
+    private var selectionOverlay: some View {
+        if item.tool.usesEndpoints {
+            ForEach(endpointViewPoints.indices, id: \.self) { index in
+                SelectionHandle()
+                    .position(endpointViewPoints[index])
+            }
+        } else {
+            SelectionFrame()
+                .frame(
+                    width: max(viewBounds.width + selectionOutset * 2, 18),
+                    height: max(viewBounds.height + selectionOutset * 2, 18)
+                )
+                .position(x: viewBounds.midX, y: viewBounds.midY)
+        }
+    }
+
+    private var arrowHeadPath: Path? {
+        guard item.tool == .arrow,
+              let start = endpointViewPoints.first,
+              let end = endpointViewPoints.last else {
+            return nil
+        }
+
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let length = hypot(dx, dy)
+        guard length > 0.5 else { return nil }
+
+        let unit = CGPoint(x: dx / length, y: dy / length)
+        let perpendicular = CGPoint(x: -unit.y, y: unit.x)
+        let size = max(12, item.strokeWidth * 4)
+        let halfWidth = size * 0.42
+        let base = CGPoint(x: end.x - unit.x * size, y: end.y - unit.y * size)
+
+        var path = Path()
+        path.move(to: end)
+        path.addLine(to: CGPoint(
+            x: base.x + perpendicular.x * halfWidth,
+            y: base.y + perpendicular.y * halfWidth
+        ))
+        path.addLine(to: CGPoint(
+            x: base.x - perpendicular.x * halfWidth,
+            y: base.y - perpendicular.y * halfWidth
+        ))
+        path.closeSubpath()
+        return path
+    }
+
+    private var endpointViewPoints: [CGPoint] {
+        guard item.points.count >= 2,
+              let first = item.points.first,
+              let last = item.points.last else {
+            return []
+        }
+
+        return [viewPoint(first), viewPoint(last)]
     }
 
     private var viewBounds: CGRect {
@@ -643,15 +810,17 @@ private struct SelectionFrame: View {
                 Rectangle()
                     .stroke(Color.accentColor, lineWidth: 2)
 
-                handle.position(x: 0, y: 0)
-                handle.position(x: proxy.size.width, y: 0)
-                handle.position(x: 0, y: proxy.size.height)
-                handle.position(x: proxy.size.width, y: proxy.size.height)
+                SelectionHandle().position(x: 0, y: 0)
+                SelectionHandle().position(x: proxy.size.width, y: 0)
+                SelectionHandle().position(x: 0, y: proxy.size.height)
+                SelectionHandle().position(x: proxy.size.width, y: proxy.size.height)
             }
         }
     }
+}
 
-    private var handle: some View {
+private struct SelectionHandle: View {
+    var body: some View {
         Circle()
             .fill(Color.accentColor)
             .frame(width: 12, height: 12)
@@ -766,22 +935,30 @@ private struct StrokePreview: View {
     }
 }
 
-private struct DeleteKeyHandler: NSViewRepresentable {
+private struct AnnotationKeyCommandHandler: NSViewRepresentable {
     let onDelete: () -> Void
+    let onUndo: () -> Void
+    let onRedo: () -> Void
 
-    func makeNSView(context: Context) -> DeleteKeyHandlerView {
-        let view = DeleteKeyHandlerView()
+    func makeNSView(context: Context) -> AnnotationKeyCommandHandlerView {
+        let view = AnnotationKeyCommandHandlerView()
         view.onDelete = onDelete
+        view.onUndo = onUndo
+        view.onRedo = onRedo
         return view
     }
 
-    func updateNSView(_ nsView: DeleteKeyHandlerView, context: Context) {
+    func updateNSView(_ nsView: AnnotationKeyCommandHandlerView, context: Context) {
         nsView.onDelete = onDelete
+        nsView.onUndo = onUndo
+        nsView.onRedo = onRedo
     }
 }
 
-private final class DeleteKeyHandlerView: NSView {
+private final class AnnotationKeyCommandHandlerView: NSView {
     var onDelete: (() -> Void)?
+    var onUndo: (() -> Void)?
+    var onRedo: (() -> Void)?
 
     private var localKeyMonitor: Any?
 
@@ -800,20 +977,44 @@ private final class DeleteKeyHandlerView: NSView {
         guard localKeyMonitor == nil else { return }
 
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self,
-                  self.window?.isKeyWindow == true,
-                  event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-                  Self.isDeleteKey(event) else {
+            guard let self, self.window?.isKeyWindow == true else {
                 return event
             }
 
-            self.onDelete?()
-            return nil
+            if Self.isPlainDelete(event) {
+                self.onDelete?()
+                return nil
+            }
+
+            if Self.isUndo(event) {
+                self.onUndo?()
+                return nil
+            }
+
+            if Self.isRedo(event) {
+                self.onRedo?()
+                return nil
+            }
+
+            return event
         }
     }
 
-    private static func isDeleteKey(_ event: NSEvent) -> Bool {
-        event.keyCode == 51 || event.keyCode == 117
+    private static func isPlainDelete(_ event: NSEvent) -> Bool {
+        event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+            && (event.keyCode == 51 || event.keyCode == 117)
+    }
+
+    private static func isUndo(_ event: NSEvent) -> Bool {
+        event.modifierFlags.contains(.command)
+            && !event.modifierFlags.contains(.shift)
+            && event.charactersIgnoringModifiers?.lowercased() == "z"
+    }
+
+    private static func isRedo(_ event: NSEvent) -> Bool {
+        event.modifierFlags.contains(.command)
+            && event.modifierFlags.contains(.shift)
+            && event.charactersIgnoringModifiers?.lowercased() == "z"
     }
 }
 
@@ -843,7 +1044,7 @@ private struct AnnotationItem: Identifiable, Equatable {
 
     var bounds: CGRect {
         switch tool {
-        case .line, .freehand:
+        case .line, .arrow:
             guard let first = points.first else { return rect.standardized }
             let bounds = points.dropFirst().reduce(CGRect(origin: first, size: .zero)) { rect, point in
                 rect.union(CGRect(origin: point, size: .zero))
@@ -856,13 +1057,35 @@ private struct AnnotationItem: Identifiable, Equatable {
 
     func isRenderable(minimumSize: CGFloat) -> Bool {
         switch tool {
-        case .line:
+        case .line, .arrow:
             guard points.count == 2 else { return false }
             return hypot(points[0].x - points[1].x, points[0].y - points[1].y) >= minimumSize
-        case .freehand:
-            return points.count > 1 && bounds.width + bounds.height >= minimumSize
         case .rectangle, .filledRectangle, .ellipse:
             return bounds.width >= minimumSize && bounds.height >= minimumSize
+        }
+    }
+
+    func hitTest(_ point: CGPoint, tolerance: CGFloat) -> Bool {
+        switch tool {
+        case .line, .arrow:
+            guard let start = points.first,
+                  let end = points.last else {
+                return false
+            }
+
+            return distance(from: point, toSegmentFrom: start, to: end) <= tolerance
+
+        case .rectangle, .filledRectangle:
+            return bounds.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+
+        case .ellipse:
+            let expandedBounds = bounds.insetBy(dx: -tolerance, dy: -tolerance)
+            guard expandedBounds.width > 0, expandedBounds.height > 0 else { return false }
+
+            let center = CGPoint(x: expandedBounds.midX, y: expandedBounds.midY)
+            let normalizedX = (point.x - center.x) / (expandedBounds.width / 2)
+            let normalizedY = (point.y - center.y) / (expandedBounds.height / 2)
+            return normalizedX * normalizedX + normalizedY * normalizedY <= 1
         }
     }
 
@@ -870,6 +1093,28 @@ private struct AnnotationItem: Identifiable, Equatable {
         var item = self
         item.rect = rect.offsetBy(dx: delta.x, dy: delta.y)
         item.points = points.map { CGPoint(x: $0.x + delta.x, y: $0.y + delta.y) }
+        return item
+    }
+
+    func withEndpoint(_ handle: AnnotationResizeHandle, movedTo point: CGPoint) -> AnnotationItem {
+        guard tool.usesEndpoints else { return self }
+
+        var item = self
+        if item.points.count < 2 {
+            let fallback = item.points.first ?? point
+            item.points = [fallback, fallback]
+        }
+
+        switch handle {
+        case .start:
+            item.points[0] = point
+        case .end:
+            item.points[item.points.count - 1] = point
+        case .topLeft, .topRight, .bottomLeft, .bottomRight:
+            return self
+        }
+
+        item.rect = item.bounds
         return item
     }
 
@@ -891,6 +1136,25 @@ private struct AnnotationItem: Identifiable, Equatable {
         }
         return item
     }
+
+    private func distance(from point: CGPoint, toSegmentFrom start: CGPoint, to end: CGPoint) -> CGFloat {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let lengthSquared = dx * dx + dy * dy
+
+        guard lengthSquared > 0 else {
+            return hypot(point.x - start.x, point.y - start.y)
+        }
+
+        let projection = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared
+        let clampedProjection = min(max(projection, 0), 1)
+        let closest = CGPoint(
+            x: start.x + clampedProjection * dx,
+            y: start.y + clampedProjection * dy
+        )
+
+        return hypot(point.x - closest.x, point.y - closest.y)
+    }
 }
 
 private enum AnnotationTool: String, CaseIterable, Identifiable {
@@ -898,7 +1162,7 @@ private enum AnnotationTool: String, CaseIterable, Identifiable {
     case filledRectangle
     case ellipse
     case line
-    case freehand
+    case arrow
 
     var id: String { rawValue }
 
@@ -912,8 +1176,8 @@ private enum AnnotationTool: String, CaseIterable, Identifiable {
             "Circle"
         case .line:
             "Straight line"
-        case .freehand:
-            "Freehand"
+        case .arrow:
+            "Arrow"
         }
     }
 
@@ -927,13 +1191,17 @@ private enum AnnotationTool: String, CaseIterable, Identifiable {
             "circle"
         case .line:
             "line.diagonal"
-        case .freehand:
-            "pencil.line"
+        case .arrow:
+            "arrow.up.right"
         }
     }
 
     var isFilledShape: Bool {
         self == .filledRectangle
+    }
+
+    var usesEndpoints: Bool {
+        self == .line || self == .arrow
     }
 }
 
@@ -1044,8 +1312,10 @@ private enum AnnotationRenderer {
 
         for item in items {
             context.setStrokeColor(item.swatch.nsColor.cgColor)
-            context.setFillColor(item.swatch.nsColor.withAlphaComponent(0.78).cgColor)
-            context.setLineWidth(renderedLineWidth(for: item, imageWidth: width, imageHeight: height))
+            context.setFillColor(item.swatch.nsColor.cgColor)
+
+            let lineWidth = renderedLineWidth(for: item, imageWidth: width, imageHeight: height)
+            context.setLineWidth(lineWidth)
 
             switch item.tool {
             case .rectangle:
@@ -1057,14 +1327,22 @@ private enum AnnotationRenderer {
             case .ellipse:
                 context.strokeEllipse(in: renderedRect(item.bounds, width: width, height: height))
 
-            case .line, .freehand:
-                guard let first = item.points.first else { continue }
-                context.beginPath()
-                context.move(to: renderedPoint(first, width: width, height: height))
-                item.points.dropFirst().forEach { point in
-                    context.addLine(to: renderedPoint(point, width: width, height: height))
+            case .line, .arrow:
+                guard let first = item.points.first,
+                      let last = item.points.last else {
+                    continue
                 }
+
+                let start = renderedPoint(first, width: width, height: height)
+                let end = renderedPoint(last, width: width, height: height)
+                context.beginPath()
+                context.move(to: start)
+                context.addLine(to: end)
                 context.strokePath()
+
+                if item.tool == .arrow {
+                    drawArrowHead(from: start, to: end, lineWidth: lineWidth, context: context)
+                }
             }
         }
 
@@ -1113,6 +1391,39 @@ private enum AnnotationRenderer {
             x: point.x * CGFloat(width),
             y: (1 - point.y) * CGFloat(height)
         )
+    }
+
+    private static func drawArrowHead(
+        from start: CGPoint,
+        to end: CGPoint,
+        lineWidth: CGFloat,
+        context: CGContext
+    ) {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let length = hypot(dx, dy)
+        guard length > 0.5 else { return }
+
+        let unit = CGPoint(x: dx / length, y: dy / length)
+        let perpendicular = CGPoint(x: -unit.y, y: unit.x)
+        let size = max(10, lineWidth * 3.2)
+        let halfWidth = size * 0.42
+        let base = CGPoint(x: end.x - unit.x * size, y: end.y - unit.y * size)
+        let firstWing = CGPoint(
+            x: base.x + perpendicular.x * halfWidth,
+            y: base.y + perpendicular.y * halfWidth
+        )
+        let secondWing = CGPoint(
+            x: base.x - perpendicular.x * halfWidth,
+            y: base.y - perpendicular.y * halfWidth
+        )
+
+        context.beginPath()
+        context.move(to: end)
+        context.addLine(to: firstWing)
+        context.addLine(to: secondWing)
+        context.closePath()
+        context.fillPath()
     }
 
     private static func renderedLineWidth(for item: AnnotationItem, imageWidth: Int, imageHeight: Int) -> CGFloat {
