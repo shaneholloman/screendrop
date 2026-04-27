@@ -20,6 +20,7 @@ struct PreviewWindowView: View {
     @State private var previewStack = ScreenshotPreviewStack.shared
     @State private var keyMonitor: Any?
     @State private var globalKeyMonitor: Any?
+    @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismissWindow
     
     var body: some View {
@@ -43,6 +44,10 @@ struct PreviewWindowView: View {
                     },
                     onSave: {
                         previewStack.save(id: item.id)
+                    },
+                    onAnnotate: {
+                        QuickLookPreviewPresenter.dismiss()
+                        openWindow(id: "ANNOTATION_EDITOR", value: item.url)
                     },
                     onDragBegan: {
                         previewStack.beginDrag(id: item.id)
@@ -127,6 +132,7 @@ private struct PreviewCardView: View {
     let onDelete: () -> Void
     let onCopy: () -> Void
     let onSave: () -> Void
+    let onAnnotate: () -> Void
     let onDragBegan: () -> Void
     let onDragEnded: () -> Void
     
@@ -213,6 +219,16 @@ private struct PreviewCardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(10)
             
+            Button(action: onAnnotate) {
+                Image(systemName: "pencil.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.black, .white)
+            }
+            .buttonStyle(.plain)
+            .help("Annotate screenshot")
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .padding(10)
+            
             VStack(spacing: 8) {
                 Button(action: onCopy) {
                     Text("Copy")
@@ -249,8 +265,8 @@ private struct PreviewCardView: View {
 
 struct ScreenshotPreviewItem: Identifiable, Equatable {
     let id = UUID()
-    let url: URL
-    let previewImage: NSImage
+    var url: URL
+    var previewImage: NSImage
     var autoSavedURL: URL?
     
     static func == (lhs: ScreenshotPreviewItem, rhs: ScreenshotPreviewItem) -> Bool {
@@ -402,6 +418,22 @@ final class ScreenshotPreviewStack {
                     print("Failed to save: \(error)")
                 }
             }
+        }
+    }
+    
+    func replace(originalURL: URL, with annotatedURL: URL) {
+        guard let image = ScreenshotImageLoader.downsampledImage(at: annotatedURL, maxPixelSize: 520) else {
+            return
+        }
+        
+        QuickLookPreviewPresenter.dismiss()
+        
+        if let index = items.firstIndex(where: { $0.url == originalURL }) {
+            items[index].url = annotatedURL
+            items[index].previewImage = image
+            items[index].autoSavedURL = nil
+        } else {
+            items.insert(ScreenshotPreviewItem(url: annotatedURL, previewImage: image), at: 0)
         }
     }
     

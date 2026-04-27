@@ -1,0 +1,1121 @@
+//
+//  AnnotationEditorWindow.swift
+//  OpenShot
+//
+//  Created by Codex on 27/04/26.
+//
+
+import AppKit
+import ImageIO
+import Observation
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct AnnotationEditorWindow: View {
+    @Binding var url: URL?
+
+    @State private var model = AnnotationEditorModel()
+    @Environment(\.dismiss) private var dismissWindow
+
+    var body: some View {
+        VStack(spacing: 0) {
+            toolbar
+
+            ZStack {
+                Rectangle()
+                    .fill(.regularMaterial)
+
+                if let previewImage = model.previewImage, model.imageSize != .zero {
+                    AnnotationCanvas(model: model, image: previewImage)
+                        .padding(.horizontal, 34)
+                        .padding(.vertical, 28)
+                } else {
+                    ProgressView()
+                        .controlSize(.large)
+                }
+            }
+            .frame(minWidth: 920, minHeight: 580)
+
+            if let errorMessage = model.errorMessage {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(.bar)
+            }
+        }
+        .task(id: url) {
+            model.load(url: url, dismiss: dismissWindow)
+        }
+        .onDeleteCommand {
+            model.deleteSelectedAnnotation()
+        }
+        .background(DeleteKeyHandler {
+            model.deleteSelectedAnnotation()
+        })
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "pencil.and.outline")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.trailing, 2)
+
+            AnnotationToolPicker(selectedTool: model.selectedTool) { tool in
+                model.selectedTool = tool
+            }
+
+            Divider()
+                .frame(height: 24)
+
+            AnnotationColorMenu(selectedSwatch: model.selectedSwatch) { swatch in
+                model.setSwatch(swatch)
+            }
+
+            AnnotationStrokeMenu(strokeWidth: model.strokeWidth) { strokeWidth in
+                model.setStrokeWidth(strokeWidth)
+            }
+
+            Spacer()
+
+            Button("Save as...") {
+                saveAs()
+            }
+
+            Button("Done") {
+                finishEditing()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(.bar)
+    }
+
+    private func saveAs() {
+        guard let sourceURL = model.sourceURL else { return }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [ScreenshotFileActions.exportContentType]
+        panel.nameFieldStringValue = ScreenshotFileActions.exportFileName(for: sourceURL)
+        panel.canCreateDirectories = true
+        panel.title = "Save Annotated Screenshot"
+
+        panel.begin { response in
+            guard response == .OK, let destinationURL = panel.url else { return }
+
+            do {
+                try AnnotationRenderer.render(
+                    sourceURL: sourceURL,
+                    items: model.items,
+                    destinationURL: destinationURL,
+                    contentType: ScreenshotFileActions.exportContentType
+                )
+            } catch {
+                model.errorMessage = "Failed to save annotation: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func finishEditing() {
+        guard let sourceURL = model.sourceURL else {
+            dismissWindow()
+            return
+        }
+
+        guard !model.items.isEmpty else {
+            dismissWindow()
+            return
+        }
+
+        do {
+            let annotatedURL = try AnnotationRenderer.renderToTemporaryFile(
+                sourceURL: sourceURL,
+                items: model.items
+            )
+            ScreenshotPreviewStack.shared.replace(originalURL: sourceURL, with: annotatedURL)
+            dismissWindow()
+        } catch {
+            model.errorMessage = "Failed to finish annotation: \(error.localizedDescription)"
+        }
+    }
+}
+
+@MainActor
+@Observable
+private final class AnnotationEditorModel {
+    var sourceURL: URL?
+    var previewImage: NSImage?
+    var imageSize: CGSize = .zero
+    var items: [AnnotationItem] = []
+    var draftItem: AnnotationItem?
+    var selectedItemID: AnnotationItem.ID?
+    var selectedTool: AnnotationTool = .rectangle
+    var selectedSwatch: AnnotationSwatch = .red
+    var strokeWidth: CGFloat = 4
+    var errorMessage: String?
+
+    private var interaction: AnnotationInteraction?
+    private let minimumItemSize: CGFloat = 0.006
+
+    func load(url: URL?, dismiss: DismissAction) {
+        guard let url else {
+            dismiss()
+            return
+        }
+
+        sourceURL = url
+        imageSize = ScreenshotImageLoader.imageSize(at: url) ?? .zero
+        previewImage = ScreenshotImageLoader.downsampledImage(at: url, maxPixelSize: 2400)
+        items = []
+        draftItem = nil
+        selectedItemID = nil
+        interaction = nil
+        errorMessage = nil
+
+        if previewImage == nil || imageSize == .zero {
+            errorMessage = "Unable to load screenshot."
+        }
+    }
+
+    func beginInteraction(at location: CGPoint, in imageFrame: CGRect) {
+        guard let point = normalizedPoint(location, in: imageFrame, clamped: false) else {
+            selectedItemID = nil
+            interaction = nil
+            return
+        }
+
+        if let selectedItem,
+           let resizeHandle = hitTestResizeHandle(point, in: imageFrame, item: selectedItem) {
+            applyStyleFromItem(selectedItem)
+            draftItem = nil
+            interaction = .resizing(id: selectedItem.id, handle: resizeHandle, originalItem: selectedItem)
+            return
+        }
+
+        if let item = hitTest(point) {
+            selectedItemID = item.id
+            applyStyleFromItem(item)
+            draftItem = nil
+
+            if let resizeHandle = hitTestResizeHandle(point, in: imageFrame, item: item) {
+                interaction = .resizing(id: item.id, handle: resizeHandle, originalItem: item)
+            } else {
+                interaction = .moving(id: item.id, startPoint: point, originalItem: item)
+            }
+        } else {
+            selectedItemID = nil
+            draftItem = AnnotationItem(
+                tool: selectedTool,
+                rect: CGRect(origin: point, size: .zero),
+                points: selectedTool == .freehand ? [point] : [],
+                swatch: selectedSwatch,
+                strokeWidth: strokeWidth
+            )
+            interaction = .drawing(startPoint: point)
+        }
+    }
+
+    func updateInteraction(to location: CGPoint, in imageFrame: CGRect) {
+        guard let interaction,
+              let point = normalizedPoint(location, in: imageFrame, clamped: true) else {
+            return
+        }
+
+        switch interaction {
+        case .drawing(let startPoint):
+            updateDraftItem(from: startPoint, to: point)
+
+        case .moving(let id, let startPoint, let originalItem):
+            let delta = CGPoint(x: point.x - startPoint.x, y: point.y - startPoint.y)
+            updateItem(id: id, item: originalItem.offsetBy(clampedDelta(delta, for: originalItem.bounds)))
+
+        case .resizing(let id, let handle, let originalItem):
+            let newBounds = resizedRect(originalItem.bounds, handle: handle, to: point)
+            updateItem(id: id, item: originalItem.resized(to: newBounds))
+        }
+    }
+
+    func endInteraction(at location: CGPoint, in imageFrame: CGRect) {
+        defer { interaction = nil }
+
+        guard let interaction,
+              let point = normalizedPoint(location, in: imageFrame, clamped: true) else {
+            draftItem = nil
+            return
+        }
+
+        switch interaction {
+        case .drawing(let startPoint):
+            updateDraftItem(from: startPoint, to: point)
+
+            guard let item = draftItem,
+                  item.isRenderable(minimumSize: minimumItemSize) else {
+                draftItem = nil
+                return
+            }
+
+            items.append(item)
+            selectedItemID = item.id
+            draftItem = nil
+
+        case .moving, .resizing:
+            break
+        }
+    }
+
+    func setSwatch(_ swatch: AnnotationSwatch) {
+        selectedSwatch = swatch
+
+        if let selectedItemID {
+            updateItem(id: selectedItemID) { item in
+                item.swatch = swatch
+            }
+        }
+
+        if var draftItem {
+            draftItem.swatch = swatch
+            self.draftItem = draftItem
+        }
+    }
+
+    func setStrokeWidth(_ strokeWidth: CGFloat) {
+        self.strokeWidth = strokeWidth
+
+        if let selectedItemID {
+            updateItem(id: selectedItemID) { item in
+                item.strokeWidth = strokeWidth
+            }
+        }
+
+        if var draftItem {
+            draftItem.strokeWidth = strokeWidth
+            self.draftItem = draftItem
+        }
+    }
+
+    func deleteSelectedAnnotation() {
+        guard let selectedItemID else { return }
+
+        items.removeAll { $0.id == selectedItemID }
+        self.selectedItemID = nil
+        interaction = nil
+    }
+
+    private func updateDraftItem(from startPoint: CGPoint, to point: CGPoint) {
+        guard var draftItem else { return }
+
+        if selectedTool == .freehand {
+            if draftItem.points.last.map({ distance(from: $0, to: point) > 0.003 }) != false {
+                draftItem.points.append(point)
+            }
+            draftItem.rect = boundingRect(for: draftItem.points)
+        } else {
+            draftItem.rect = rect(from: startPoint, to: point)
+            if selectedTool == .line {
+                draftItem.points = [startPoint, point]
+            }
+        }
+
+        self.draftItem = draftItem
+    }
+
+    private func hitTest(_ point: CGPoint) -> AnnotationItem? {
+        items.reversed().first { item in
+            item.bounds.insetBy(dx: -0.008, dy: -0.008).contains(point)
+        }
+    }
+
+    private var selectedItem: AnnotationItem? {
+        guard let selectedItemID else { return nil }
+        return items.first { $0.id == selectedItemID }
+    }
+
+    private func hitTestResizeHandle(
+        _ point: CGPoint,
+        in imageFrame: CGRect,
+        item: AnnotationItem
+    ) -> AnnotationResizeHandle? {
+        let xTolerance = 12 / max(imageFrame.width, 1)
+        let yTolerance = 12 / max(imageFrame.height, 1)
+
+        return AnnotationResizeHandle.allCases.first { handle in
+            let corner = handle.corner(in: item.bounds)
+            return abs(point.x - corner.x) <= xTolerance && abs(point.y - corner.y) <= yTolerance
+        }
+    }
+
+    private func applyStyleFromItem(_ item: AnnotationItem) {
+        selectedTool = item.tool
+        selectedSwatch = item.swatch
+        strokeWidth = item.strokeWidth
+    }
+
+    private func normalizedPoint(_ location: CGPoint, in imageFrame: CGRect, clamped: Bool) -> CGPoint? {
+        guard imageFrame.width > 0, imageFrame.height > 0 else { return nil }
+
+        let point: CGPoint
+        if clamped {
+            point = CGPoint(
+                x: min(max(location.x, imageFrame.minX), imageFrame.maxX),
+                y: min(max(location.y, imageFrame.minY), imageFrame.maxY)
+            )
+        } else {
+            guard imageFrame.contains(location) else { return nil }
+            point = location
+        }
+
+        return CGPoint(
+            x: (point.x - imageFrame.minX) / imageFrame.width,
+            y: (point.y - imageFrame.minY) / imageFrame.height
+        )
+    }
+
+    private func rect(from startPoint: CGPoint, to endPoint: CGPoint) -> CGRect {
+        CGRect(
+            x: min(startPoint.x, endPoint.x),
+            y: min(startPoint.y, endPoint.y),
+            width: abs(endPoint.x - startPoint.x),
+            height: abs(endPoint.y - startPoint.y)
+        ).standardized
+    }
+
+    private func resizedRect(
+        _ originalRect: CGRect,
+        handle: AnnotationResizeHandle,
+        to point: CGPoint
+    ) -> CGRect {
+        let anchor = handle.oppositeCorner(in: originalRect)
+        let constrainedPoint = handle.constrainedPoint(
+            point,
+            from: anchor,
+            minimumSize: minimumItemSize
+        )
+
+        return rect(from: anchor, to: constrainedPoint)
+    }
+
+    private func clampedDelta(_ delta: CGPoint, for bounds: CGRect) -> CGPoint {
+        CGPoint(
+            x: min(max(delta.x, -bounds.minX), 1 - bounds.maxX),
+            y: min(max(delta.y, -bounds.minY), 1 - bounds.maxY)
+        )
+    }
+
+    private func updateItem(id: AnnotationItem.ID, item: AnnotationItem) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index] = item
+    }
+
+    private func updateItem(id: AnnotationItem.ID, mutate: (inout AnnotationItem) -> Void) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&items[index])
+    }
+
+    private func boundingRect(for points: [CGPoint]) -> CGRect {
+        guard let first = points.first else { return .zero }
+
+        return points.dropFirst().reduce(CGRect(origin: first, size: .zero)) { rect, point in
+            rect.union(CGRect(origin: point, size: .zero))
+        }
+    }
+
+    private func distance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
+        hypot(lhs.x - rhs.x, lhs.y - rhs.y)
+    }
+}
+
+private enum AnnotationInteraction {
+    case drawing(startPoint: CGPoint)
+    case moving(id: AnnotationItem.ID, startPoint: CGPoint, originalItem: AnnotationItem)
+    case resizing(id: AnnotationItem.ID, handle: AnnotationResizeHandle, originalItem: AnnotationItem)
+}
+
+private enum AnnotationResizeHandle: CaseIterable {
+    case topLeft
+    case topRight
+    case bottomLeft
+    case bottomRight
+
+    func corner(in rect: CGRect) -> CGPoint {
+        switch self {
+        case .topLeft:
+            CGPoint(x: rect.minX, y: rect.minY)
+        case .topRight:
+            CGPoint(x: rect.maxX, y: rect.minY)
+        case .bottomLeft:
+            CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottomRight:
+            CGPoint(x: rect.maxX, y: rect.maxY)
+        }
+    }
+
+    func oppositeCorner(in rect: CGRect) -> CGPoint {
+        switch self {
+        case .topLeft:
+            CGPoint(x: rect.maxX, y: rect.maxY)
+        case .topRight:
+            CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottomLeft:
+            CGPoint(x: rect.maxX, y: rect.minY)
+        case .bottomRight:
+            CGPoint(x: rect.minX, y: rect.minY)
+        }
+    }
+
+    func constrainedPoint(_ point: CGPoint, from anchor: CGPoint, minimumSize: CGFloat) -> CGPoint {
+        switch self {
+        case .topLeft:
+            CGPoint(x: min(point.x, anchor.x - minimumSize), y: min(point.y, anchor.y - minimumSize))
+        case .topRight:
+            CGPoint(x: max(point.x, anchor.x + minimumSize), y: min(point.y, anchor.y - minimumSize))
+        case .bottomLeft:
+            CGPoint(x: min(point.x, anchor.x - minimumSize), y: max(point.y, anchor.y + minimumSize))
+        case .bottomRight:
+            CGPoint(x: max(point.x, anchor.x + minimumSize), y: max(point.y, anchor.y + minimumSize))
+        }
+    }
+}
+
+private struct AnnotationCanvas: View {
+    @Bindable var model: AnnotationEditorModel
+    let image: NSImage
+
+    @State private var hasActiveInteraction = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let imageFrame = aspectFitRect(imageSize: model.imageSize, in: proxy.size)
+
+            ZStack(alignment: .topLeading) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: imageFrame.width, height: imageFrame.height)
+                    .position(x: imageFrame.midX, y: imageFrame.midY)
+                    .shadow(color: .black.opacity(0.26), radius: 18, x: 0, y: 8)
+
+                ForEach(model.items) { item in
+                    AnnotationItemView(
+                        item: item,
+                        imageFrame: imageFrame,
+                        isSelected: item.id == model.selectedItemID
+                    )
+                }
+
+                if let draftItem = model.draftItem {
+                    AnnotationItemView(
+                        item: draftItem,
+                        imageFrame: imageFrame,
+                        isSelected: true
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(interactionGesture(imageFrame: imageFrame))
+        }
+    }
+
+    private func interactionGesture(imageFrame: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { value in
+                if !hasActiveInteraction {
+                    hasActiveInteraction = true
+                    model.beginInteraction(at: value.startLocation, in: imageFrame)
+                }
+
+                model.updateInteraction(to: value.location, in: imageFrame)
+            }
+            .onEnded { value in
+                model.endInteraction(at: value.location, in: imageFrame)
+                hasActiveInteraction = false
+            }
+    }
+
+    private func aspectFitRect(imageSize: CGSize, in containerSize: CGSize) -> CGRect {
+        guard imageSize.width > 0,
+              imageSize.height > 0,
+              containerSize.width > 0,
+              containerSize.height > 0 else {
+            return .zero
+        }
+
+        let scale = min(containerSize.width / imageSize.width, containerSize.height / imageSize.height)
+        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return CGRect(
+            x: (containerSize.width - size.width) / 2,
+            y: (containerSize.height - size.height) / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+}
+
+private struct AnnotationItemView: View {
+    let item: AnnotationItem
+    let imageFrame: CGRect
+    let isSelected: Bool
+
+    private let selectionOutset: CGFloat = 5
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            itemPath
+                .fill(fillStyle)
+            itemPath
+                .stroke(item.swatch.color, style: StrokeStyle(lineWidth: item.tool.isFilledShape ? 0 : item.strokeWidth, lineCap: .round, lineJoin: .round))
+
+            if isSelected {
+                SelectionFrame()
+                    .frame(
+                        width: max(viewBounds.width + selectionOutset * 2, 18),
+                        height: max(viewBounds.height + selectionOutset * 2, 18)
+                    )
+                    .position(x: viewBounds.midX, y: viewBounds.midY)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var itemPath: Path {
+        let rect = viewRect(item.bounds)
+
+        switch item.tool {
+        case .rectangle, .filledRectangle:
+            return Path(rect)
+
+        case .ellipse:
+            return Path(ellipseIn: rect)
+
+        case .line:
+            var path = Path()
+            let points = item.points.map(viewPoint)
+            if let first = points.first {
+                path.move(to: first)
+                points.dropFirst().forEach { path.addLine(to: $0) }
+            }
+            return path
+
+        case .freehand:
+            var path = Path()
+            let points = item.points.map(viewPoint)
+            if let first = points.first {
+                path.move(to: first)
+                points.dropFirst().forEach { path.addLine(to: $0) }
+            }
+            return path
+        }
+    }
+
+    private var fillStyle: Color {
+        item.tool.isFilledShape ? item.swatch.color.opacity(0.78) : .clear
+    }
+
+    private var viewBounds: CGRect {
+        viewRect(item.bounds)
+    }
+
+    private func viewRect(_ rect: CGRect) -> CGRect {
+        CGRect(
+            x: imageFrame.minX + rect.minX * imageFrame.width,
+            y: imageFrame.minY + rect.minY * imageFrame.height,
+            width: rect.width * imageFrame.width,
+            height: rect.height * imageFrame.height
+        )
+    }
+
+    private func viewPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: imageFrame.minX + point.x * imageFrame.width,
+            y: imageFrame.minY + point.y * imageFrame.height
+        )
+    }
+}
+
+private struct SelectionFrame: View {
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Rectangle()
+                    .stroke(Color.accentColor, lineWidth: 2)
+
+                handle.position(x: 0, y: 0)
+                handle.position(x: proxy.size.width, y: 0)
+                handle.position(x: 0, y: proxy.size.height)
+                handle.position(x: proxy.size.width, y: proxy.size.height)
+            }
+        }
+    }
+
+    private var handle: some View {
+        Circle()
+            .fill(Color.accentColor)
+            .frame(width: 12, height: 12)
+            .overlay(Circle().stroke(.white, lineWidth: 2))
+            .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
+    }
+}
+
+private struct AnnotationToolPicker: View {
+    let selectedTool: AnnotationTool
+    let onSelect: (AnnotationTool) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(AnnotationTool.allCases) { tool in
+                Button {
+                    onSelect(tool)
+                } label: {
+                    Image(systemName: tool.systemImage)
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(selectedTool == tool ? .white : .primary)
+                .background {
+                    if selectedTool == tool {
+                        Capsule().fill(Color.accentColor)
+                    }
+                }
+                .help(tool.title)
+            }
+        }
+        .padding(4)
+        .annotationGlass(in: Capsule())
+    }
+}
+
+private struct AnnotationColorMenu: View {
+    let selectedSwatch: AnnotationSwatch
+    let onSelect: (AnnotationSwatch) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(AnnotationSwatch.allCases) { swatch in
+                Button {
+                    onSelect(swatch)
+                } label: {
+                    Label(swatch.title, systemImage: selectedSwatch == swatch ? "checkmark.circle.fill" : "circle.fill")
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(selectedSwatch.color)
+                    .frame(width: 18, height: 18)
+                    .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1.5))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .frame(height: 28)
+            .padding(.horizontal, 10)
+            .annotationGlass(in: Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .help("Color")
+    }
+}
+
+private struct AnnotationStrokeMenu: View {
+    let strokeWidth: CGFloat
+    let onSelect: (CGFloat) -> Void
+
+    private let widths: [CGFloat] = [2, 4, 6, 8, 12]
+
+    var body: some View {
+        Menu {
+            ForEach(widths, id: \.self) { width in
+                Button {
+                    onSelect(width)
+                } label: {
+                    Label("\(Int(width)) px", systemImage: strokeWidth == width ? "checkmark" : "line.diagonal")
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                StrokePreview(width: strokeWidth)
+                    .frame(width: 24, height: 16)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .frame(height: 28)
+            .padding(.horizontal, 10)
+            .annotationGlass(in: Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .help("Stroke thickness")
+    }
+}
+
+private struct StrokePreview: View {
+    let width: CGFloat
+
+    var body: some View {
+        Path { path in
+            path.move(to: CGPoint(x: 3, y: 13))
+            path.addLine(to: CGPoint(x: 21, y: 3))
+        }
+        .stroke(.primary, style: StrokeStyle(lineWidth: min(width, 7), lineCap: .round))
+    }
+}
+
+private struct DeleteKeyHandler: NSViewRepresentable {
+    let onDelete: () -> Void
+
+    func makeNSView(context: Context) -> DeleteKeyHandlerView {
+        let view = DeleteKeyHandlerView()
+        view.onDelete = onDelete
+        return view
+    }
+
+    func updateNSView(_ nsView: DeleteKeyHandlerView, context: Context) {
+        nsView.onDelete = onDelete
+    }
+}
+
+private final class DeleteKeyHandlerView: NSView {
+    var onDelete: (() -> Void)?
+
+    private var localKeyMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateLocalKeyMonitor()
+    }
+
+    deinit {
+        if let localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
+        }
+    }
+
+    private func updateLocalKeyMonitor() {
+        guard localKeyMonitor == nil else { return }
+
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  self.window?.isKeyWindow == true,
+                  event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+                  Self.isDeleteKey(event) else {
+                return event
+            }
+
+            self.onDelete?()
+            return nil
+        }
+    }
+
+    private static func isDeleteKey(_ event: NSEvent) -> Bool {
+        event.keyCode == 51 || event.keyCode == 117
+    }
+}
+
+private struct AnnotationItem: Identifiable, Equatable {
+    let id: UUID
+    var tool: AnnotationTool
+    var rect: CGRect
+    var points: [CGPoint]
+    var swatch: AnnotationSwatch
+    var strokeWidth: CGFloat
+
+    init(
+        id: UUID = UUID(),
+        tool: AnnotationTool,
+        rect: CGRect,
+        points: [CGPoint] = [],
+        swatch: AnnotationSwatch,
+        strokeWidth: CGFloat
+    ) {
+        self.id = id
+        self.tool = tool
+        self.rect = rect
+        self.points = points
+        self.swatch = swatch
+        self.strokeWidth = strokeWidth
+    }
+
+    var bounds: CGRect {
+        switch tool {
+        case .line, .freehand:
+            guard let first = points.first else { return rect.standardized }
+            let bounds = points.dropFirst().reduce(CGRect(origin: first, size: .zero)) { rect, point in
+                rect.union(CGRect(origin: point, size: .zero))
+            }
+            return bounds.standardized
+        case .rectangle, .filledRectangle, .ellipse:
+            return rect.standardized
+        }
+    }
+
+    func isRenderable(minimumSize: CGFloat) -> Bool {
+        switch tool {
+        case .line:
+            guard points.count == 2 else { return false }
+            return hypot(points[0].x - points[1].x, points[0].y - points[1].y) >= minimumSize
+        case .freehand:
+            return points.count > 1 && bounds.width + bounds.height >= minimumSize
+        case .rectangle, .filledRectangle, .ellipse:
+            return bounds.width >= minimumSize && bounds.height >= minimumSize
+        }
+    }
+
+    func offsetBy(_ delta: CGPoint) -> AnnotationItem {
+        var item = self
+        item.rect = rect.offsetBy(dx: delta.x, dy: delta.y)
+        item.points = points.map { CGPoint(x: $0.x + delta.x, y: $0.y + delta.y) }
+        return item
+    }
+
+    func resized(to newBounds: CGRect) -> AnnotationItem {
+        let oldBounds = bounds.standardized
+        guard oldBounds.width > 0, oldBounds.height > 0 else {
+            var item = self
+            item.rect = newBounds
+            return item
+        }
+
+        var item = self
+        item.rect = newBounds
+        item.points = points.map { point in
+            CGPoint(
+                x: newBounds.minX + ((point.x - oldBounds.minX) / oldBounds.width) * newBounds.width,
+                y: newBounds.minY + ((point.y - oldBounds.minY) / oldBounds.height) * newBounds.height
+            )
+        }
+        return item
+    }
+}
+
+private enum AnnotationTool: String, CaseIterable, Identifiable {
+    case rectangle
+    case filledRectangle
+    case ellipse
+    case line
+    case freehand
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .rectangle:
+            "Rectangle"
+        case .filledRectangle:
+            "Solid rectangle"
+        case .ellipse:
+            "Circle"
+        case .line:
+            "Straight line"
+        case .freehand:
+            "Freehand"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .rectangle:
+            "rectangle"
+        case .filledRectangle:
+            "square.fill"
+        case .ellipse:
+            "circle"
+        case .line:
+            "line.diagonal"
+        case .freehand:
+            "pencil.line"
+        }
+    }
+
+    var isFilledShape: Bool {
+        self == .filledRectangle
+    }
+}
+
+enum AnnotationSwatch: String, CaseIterable, Identifiable {
+    case red
+    case blue
+    case yellow
+    case green
+    case white
+    case black
+
+    var id: String { rawValue }
+
+    var title: String { rawValue.capitalized }
+
+    var color: Color {
+        switch self {
+        case .red:
+            Color(red: 0.97, green: 0.22, blue: 0.2)
+        case .blue:
+            Color(red: 0.18, green: 0.48, blue: 1)
+        case .yellow:
+            Color(red: 1, green: 0.82, blue: 0.18)
+        case .green:
+            Color(red: 0.18, green: 0.72, blue: 0.36)
+        case .white:
+            .white
+        case .black:
+            .black
+        }
+    }
+
+    var nsColor: NSColor {
+        switch self {
+        case .red:
+            NSColor(red: 0.97, green: 0.22, blue: 0.2, alpha: 1)
+        case .blue:
+            NSColor(red: 0.18, green: 0.48, blue: 1, alpha: 1)
+        case .yellow:
+            NSColor(red: 1, green: 0.82, blue: 0.18, alpha: 1)
+        case .green:
+            NSColor(red: 0.18, green: 0.72, blue: 0.36, alpha: 1)
+        case .white:
+            .white
+        case .black:
+            .black
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func annotationGlass<S: Shape>(in shape: S) -> some View {
+        if #available(macOS 26.0, *) {
+            glassEffect(.regular.interactive(), in: shape)
+        } else {
+            background(.ultraThinMaterial, in: shape)
+        }
+    }
+}
+
+private enum AnnotationRenderer {
+    static func renderToTemporaryFile(sourceURL: URL, items: [AnnotationItem]) throws -> URL {
+        let destinationURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("OpenShot_Annotated_\(UUID().uuidString.prefix(6)).png")
+        try render(sourceURL: sourceURL, items: items, destinationURL: destinationURL, contentType: .png)
+        return destinationURL
+    }
+
+    static func render(
+        sourceURL: URL,
+        items: [AnnotationItem],
+        destinationURL: URL,
+        contentType: UTType
+    ) throws {
+        guard let source = CGImageSourceCreateWithURL(
+            sourceURL as CFURL,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        ),
+              let cgImage = CGImageSourceCreateImageAtIndex(
+                source,
+                0,
+                [kCGImageSourceShouldCache: false] as CFDictionary
+              ) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        let width = cgImage.width
+        let height = cgImage.height
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        let fullRect = CGRect(x: 0, y: 0, width: width, height: height)
+        context.draw(cgImage, in: fullRect)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+
+        for item in items {
+            context.setStrokeColor(item.swatch.nsColor.cgColor)
+            context.setFillColor(item.swatch.nsColor.withAlphaComponent(0.78).cgColor)
+            context.setLineWidth(renderedLineWidth(for: item, imageWidth: width, imageHeight: height))
+
+            switch item.tool {
+            case .rectangle:
+                context.stroke(renderedRect(item.bounds, width: width, height: height))
+
+            case .filledRectangle:
+                context.fill(renderedRect(item.bounds, width: width, height: height))
+
+            case .ellipse:
+                context.strokeEllipse(in: renderedRect(item.bounds, width: width, height: height))
+
+            case .line, .freehand:
+                guard let first = item.points.first else { continue }
+                context.beginPath()
+                context.move(to: renderedPoint(first, width: width, height: height))
+                item.points.dropFirst().forEach { point in
+                    context.addLine(to: renderedPoint(point, width: width, height: height))
+                }
+                context.strokePath()
+            }
+        }
+
+        guard let renderedImage = context.makeImage() else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+
+        guard let destination = CGImageDestinationCreateWithURL(
+            destinationURL as CFURL,
+            contentType.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        var options: CFDictionary?
+        if contentType == .jpeg {
+            options = [
+                kCGImageDestinationLossyCompressionQuality: OpenShotPreferences.compressionQuality
+            ] as CFDictionary
+        }
+
+        CGImageDestinationAddImage(destination, renderedImage, options)
+
+        guard CGImageDestinationFinalize(destination) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    private static func renderedRect(_ rect: CGRect, width: Int, height: Int) -> CGRect {
+        CGRect(
+            x: rect.minX * CGFloat(width),
+            y: (1 - rect.maxY) * CGFloat(height),
+            width: rect.width * CGFloat(width),
+            height: rect.height * CGFloat(height)
+        )
+    }
+
+    private static func renderedPoint(_ point: CGPoint, width: Int, height: Int) -> CGPoint {
+        CGPoint(
+            x: point.x * CGFloat(width),
+            y: (1 - point.y) * CGFloat(height)
+        )
+    }
+
+    private static func renderedLineWidth(for item: AnnotationItem, imageWidth: Int, imageHeight: Int) -> CGFloat {
+        max(1.5, item.strokeWidth * max(CGFloat(imageWidth), CGFloat(imageHeight)) / 900)
+    }
+}
