@@ -299,11 +299,15 @@ private final class AnnotationEditorModel {
         case .drawing(let startPoint):
             updateDraftItem(from: startPoint, to: point)
 
-            guard let item = draftItem,
+            guard var item = draftItem,
                   item.isRenderable(minimumSize: minimumItemSize, allowEmptyText: item.tool == .text) else {
                 draftItem = nil
                 statePath = AnnotationToolState.idle.path(for: selectedTool)
                 return
+            }
+
+            if item.tool == .text {
+                item.fitTextBounds(minimumSize: minimumItemSize, imageSize: imageSize)
             }
 
             history.push(items)
@@ -393,6 +397,7 @@ private final class AnnotationEditorModel {
     func setText(_ text: String, for id: AnnotationItem.ID) {
         updateItem(id: id) { item in
             item.text = text
+            item.fitTextBounds(minimumSize: minimumItemSize, imageSize: imageSize)
         }
     }
 
@@ -443,10 +448,7 @@ private final class AnnotationEditorModel {
         case .rectangle, .filledRectangle, .ellipse, .pixelate, .blur:
             draftItem.rect = rect(from: startPoint, to: point)
         case .text:
-            let drawnRect = rect(from: startPoint, to: point)
-            draftItem.rect = drawnRect.width >= minimumItemSize && drawnRect.height >= minimumItemSize
-                ? drawnRect
-                : defaultTextRect(at: startPoint)
+            draftItem.rect = defaultTextRect(at: startPoint)
         }
 
         self.draftItem = draftItem
@@ -537,7 +539,11 @@ private final class AnnotationEditorModel {
             minimumSize: minimumItemSize
         )
 
-        return originalItem.resized(to: rect(from: anchor, to: constrainedPoint))
+        var resizedItem = originalItem.resized(to: rect(from: anchor, to: constrainedPoint))
+        if resizedItem.tool == .text {
+            resizedItem.fitTextBounds(minimumSize: minimumItemSize, imageSize: imageSize)
+        }
+        return resizedItem
     }
 
     private func initialPoints(for tool: AnnotationTool, at point: CGPoint) -> [CGPoint] {
@@ -552,11 +558,14 @@ private final class AnnotationEditorModel {
     }
 
     private func defaultTextRect(at point: CGPoint) -> CGRect {
-        CGRect(
-            x: min(point.x, 0.78),
-            y: min(point.y, 0.92),
-            width: 0.22,
-            height: 0.08
+        let height = AnnotationTextMetrics.defaultNormalizedHeight
+        let width = AnnotationTextMetrics.emptyNormalizedWidth(height: height, imageSize: imageSize)
+
+        return CGRect(
+            x: min(point.x, 1 - width),
+            y: min(point.y, 1 - height),
+            width: width,
+            height: height
         )
     }
 
@@ -846,7 +855,9 @@ private struct AnnotationItemView: View {
     let text: Binding<String>
     let onCommitText: () -> Void
 
-    private let selectionOutset: CGFloat = 5
+    private var selectionOutset: CGFloat {
+        item.tool == .text ? 0 : 5
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -1024,7 +1035,7 @@ private struct AnnotationTextItemView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: fontSize, weight: .semibold))
                     .foregroundStyle(item.swatch.color)
-                    .padding(.horizontal, textInset)
+                    .shadow(color: .black.opacity(0.2), radius: 1.4, x: 0, y: 1)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .focused($isFocused)
                     .onSubmit(onCommit)
@@ -1042,7 +1053,7 @@ private struct AnnotationTextItemView: View {
                     .foregroundStyle(item.swatch.color)
                     .lineLimit(nil)
                     .multilineTextAlignment(.leading)
-                    .padding(.horizontal, textInset)
+                    .shadow(color: .black.opacity(0.2), radius: 1.4, x: 0, y: 1)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
@@ -1052,13 +1063,7 @@ private struct AnnotationTextItemView: View {
     }
 
     private var fontSize: CGFloat {
-        let textWidth = max(1, CGFloat((item.text.isEmpty ? text.wrappedValue : item.text).count))
-        let widthLimitedSize = viewBounds.width / max(textWidth * 0.62, 1)
-        return min(max(min(viewBounds.height * 0.64, widthLimitedSize), 9), 96)
-    }
-
-    private var textInset: CGFloat {
-        min(max(fontSize * 0.18, 3), 12)
+        min(max(viewBounds.height * AnnotationTextMetrics.fontHeightRatio, 9), 96)
     }
 }
 
@@ -1092,6 +1097,51 @@ private extension NSCursor {
         image.unlockFocus()
         return NSCursor(image: image, hotSpot: center)
     }()
+}
+
+private enum AnnotationTextMetrics {
+    static let defaultNormalizedHeight: CGFloat = 0.06
+    static let fontHeightRatio: CGFloat = 0.64
+    private static let emptyCaretWidthRatio: CGFloat = 0.48
+    private static let editingTrailingPadding: CGFloat = 4
+
+    static func emptyNormalizedWidth(height: CGFloat, imageSize: CGSize) -> CGFloat {
+        guard imageSize.width > 0 else { return 0.025 }
+
+        let fontSize = renderedFontSize(height: height, imageSize: imageSize)
+        return max(0.018, fontSize * emptyCaretWidthRatio / imageSize.width)
+    }
+
+    static func normalizedWidth(for text: String, height: CGFloat, imageSize: CGSize) -> CGFloat {
+        guard imageSize.width > 0 else { return 0.08 }
+
+        let fontSize = renderedFontSize(height: height, imageSize: imageSize)
+        guard !text.isEmpty else {
+            return emptyNormalizedWidth(height: height, imageSize: imageSize)
+        }
+
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byClipping
+        let attributedString = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
+        let measuredSize = attributedString.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).integral.size
+
+        return max(0.01, (measuredSize.width + editingTrailingPadding) / imageSize.width)
+    }
+
+    static func renderedFontSize(height: CGFloat, imageSize: CGSize) -> CGFloat {
+        guard imageSize.height > 0 else { return 24 }
+        return min(max(height * imageSize.height * fontHeightRatio, 9), 180)
+    }
 }
 
 private struct RedactionPreview: View {
@@ -1790,6 +1840,29 @@ private struct AnnotationItem: Identifiable, Equatable {
         return item
     }
 
+    mutating func fitTextBounds(minimumSize: CGFloat, imageSize: CGSize) {
+        guard tool == .text else { return }
+
+        let standardizedRect = rect.standardized
+        let fittedWidth = max(
+            minimumSize,
+            AnnotationTextMetrics.normalizedWidth(
+                for: text,
+                height: standardizedRect.height,
+                imageSize: imageSize
+            )
+        )
+        let originX = max(0, min(standardizedRect.minX, 1 - minimumSize))
+        let availableWidth = max(minimumSize, 1 - originX)
+
+        rect = CGRect(
+            x: originX,
+            y: standardizedRect.minY,
+            width: min(fittedWidth, availableWidth),
+            height: max(standardizedRect.height, minimumSize)
+        )
+    }
+
     private var arrowPoints: [CGPoint] {
         guard tool == .arrow,
               let start = points.first,
@@ -2161,18 +2234,21 @@ private enum AnnotationRenderer {
             return
         }
 
-        let widthLimitedSize = rect.width / max(CGFloat(text.count) * 0.62, 1)
-        let fontSize = min(max(min(rect.height * 0.64, widthLimitedSize), 9), 140)
-        let inset = min(max(fontSize * 0.18, 3), 18)
-        let drawingRect = rect.insetBy(dx: inset, dy: 0)
+        let fontSize = min(max(rect.height * AnnotationTextMetrics.fontHeightRatio, 9), 140)
+        let drawingRect = rect
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .left
-        paragraphStyle.lineBreakMode = .byWordWrapping
+        paragraphStyle.lineBreakMode = .byClipping
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
+        shadow.shadowBlurRadius = 2
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
             .foregroundColor: item.swatch.nsColor,
-            .paragraphStyle: paragraphStyle
+            .paragraphStyle: paragraphStyle,
+            .shadow: shadow
         ]
         let attributedText = NSAttributedString(string: text, attributes: attributes)
 
