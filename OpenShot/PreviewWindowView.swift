@@ -438,19 +438,21 @@ final class ScreenshotPreviewStack {
     
     @discardableResult
     func replace(originalURL: URL, with annotatedURL: URL) -> Bool {
-        guard let image = ScreenshotImageLoader.downsampledImage(at: annotatedURL, maxPixelSize: 520) else {
+        let historyURL = ScreenshotHistoryStore.shared.replace(originalURL: originalURL, with: annotatedURL)
+
+        guard let image = ScreenshotImageLoader.downsampledImage(at: historyURL, maxPixelSize: 520) else {
             return false
         }
         
         QuickLookPreviewPresenter.dismiss()
         
         if let index = items.firstIndex(where: { $0.url == originalURL }) {
-            items[index].url = annotatedURL
+            items[index].url = historyURL
             items[index].previewImage = image
             items[index].autoSavedURL = nil
             return true
         } else {
-            items.insert(ScreenshotPreviewItem(url: annotatedURL, previewImage: image), at: 0)
+            items.insert(ScreenshotPreviewItem(url: historyURL, previewImage: image), at: 0)
             return false
         }
     }

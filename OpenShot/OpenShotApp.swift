@@ -23,6 +23,11 @@ struct OpenShotApp: App {
             SettingsView()
         }
         .windowResizability(.contentSize)
+
+        Window("OpenShot History", id: "HISTORY") {
+            HistoryWindow()
+        }
+        .windowResizability(.contentSize)
         
         WindowGroup("OpenShot Annotate", id: "ANNOTATION_EDITOR", for: URL.self) { value in
             AnnotationEditorWindow(url: value)
@@ -38,7 +43,8 @@ struct OpenShotApp: App {
         }
 
         CaptureCoordinator.shared.onShowPreview = { [openWindow] url, displayID in
-            ScreenshotPreviewStack.shared.add(url: url)
+            let historyURL = ScreenshotHistoryStore.shared.importScreenshot(from: url)
+            ScreenshotPreviewStack.shared.add(url: historyURL)
             PreviewPanelPresenter.shared.onAnnotate = { url in
                 openWindow(id: "ANNOTATION_EDITOR", value: url)
             }

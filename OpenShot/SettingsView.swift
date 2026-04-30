@@ -12,8 +12,19 @@ struct SettingsView: View {
     @AppStorage(OpenShotPreferences.autoSaveKey) private var autoSave = false
     @AppStorage(OpenShotPreferences.autoCopyKey) private var autoCopy = false
     @AppStorage(OpenShotPreferences.autoCompressKey) private var autoCompress = false
+    @AppStorage(OpenShotPreferences.exportFormatKey) private var exportFormatRawValue = ""
     @AppStorage(OpenShotPreferences.compressionQualityKey) private var compressionQuality = 0.8
     @AppStorage(OpenShotPreferences.exportDirectoryPathKey) private var exportDirectoryPath = ""
+
+    private var exportFormat: ScreenshotExportFormat {
+        get {
+            ScreenshotExportFormat(rawValue: exportFormatRawValue) ?? (autoCompress ? .jpeg : .png)
+        }
+        nonmutating set {
+            exportFormatRawValue = newValue.rawValue
+            autoCompress = newValue.usesLossyQuality
+        }
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -28,9 +39,17 @@ struct SettingsView: View {
                 }
                 
                 Section {
-                    Toggle("Auto compress screenshots", isOn: $autoCompress)
+                    Picker("Export format", selection: Binding(
+                        get: { exportFormat },
+                        set: { exportFormat = $0 }
+                    )) {
+                        ForEach(ScreenshotExportFormat.allCases) { format in
+                            Text(format.title).tag(format)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                     
-                    if autoCompress {
+                    if exportFormat.usesLossyQuality {
                         LabeledContent("Quality") {
                             HStack(spacing: 12) {
                                 Slider(value: $compressionQuality, in: 0.1...1, step: 0.05)
@@ -44,7 +63,7 @@ struct SettingsView: View {
                         }
                     }
                 } footer: {
-                    Text("Compressed exports are saved as JPEG using native ImageIO encoding.")
+                    Text("Export format applies to manual saves, auto saves, and annotated screenshots.")
                 }
                 
                 Section {

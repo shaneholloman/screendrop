@@ -13,6 +13,7 @@ enum OpenShotPreferences {
     static let autoSaveKey = "autoSaveScreenshots"
     static let autoCopyKey = "autoCopyScreenshotsToClipboard"
     static let autoCompressKey = "autoCompressScreenshots"
+    static let exportFormatKey = "exportFormat"
     static let compressionQualityKey = "compressionQuality"
     static let exportDirectoryPathKey = "exportDirectoryPath"
     
@@ -28,6 +29,15 @@ enum OpenShotPreferences {
     
     static var autoCompress: Bool {
         UserDefaults.standard.bool(forKey: autoCompressKey)
+    }
+
+    static var exportFormat: ScreenshotExportFormat {
+        if let rawValue = UserDefaults.standard.string(forKey: exportFormatKey),
+           let format = ScreenshotExportFormat(rawValue: rawValue) {
+            return format
+        }
+
+        return autoCompress ? .jpeg : .png
     }
     
     static var compressionQuality: Double {
@@ -48,6 +58,51 @@ enum OpenShotPreferences {
         let picturesDirectory = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
         return (picturesDirectory ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures"))
             .appendingPathComponent("OpenShot", isDirectory: true)
+    }
+}
+
+enum ScreenshotExportFormat: String, CaseIterable, Identifiable {
+    case png
+    case jpeg
+    case heic
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .png:
+            "PNG"
+        case .jpeg:
+            "JPEG"
+        case .heic:
+            "HEIC"
+        }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .png:
+            "png"
+        case .jpeg:
+            "jpg"
+        case .heic:
+            "heic"
+        }
+    }
+
+    var contentType: UTType {
+        switch self {
+        case .png:
+            .png
+        case .jpeg:
+            .jpeg
+        case .heic:
+            .heic
+        }
+    }
+
+    var usesLossyQuality: Bool {
+        self != .png
     }
 }
 
@@ -76,33 +131,29 @@ enum ScreenshotFileActions {
     }
     
     static func save(from sourceURL: URL, to destinationURL: URL) throws {
-        if OpenShotPreferences.autoCompress {
-            try exportCompressedJPEG(from: sourceURL, to: destinationURL)
-        } else {
+        if OpenShotPreferences.exportFormat == .png {
             if FileManager.default.fileExists(atPath: destinationURL.path) {
                 try FileManager.default.removeItem(at: destinationURL)
             }
             
             try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+        } else {
+            try exportImage(from: sourceURL, to: destinationURL, contentType: OpenShotPreferences.exportFormat.contentType)
         }
     }
     
     static func exportFileName(for sourceURL: URL) -> String {
-        guard OpenShotPreferences.autoCompress else {
-            return sourceURL.lastPathComponent
-        }
-        
         return sourceURL
             .deletingPathExtension()
-            .appendingPathExtension("jpg")
+            .appendingPathExtension(OpenShotPreferences.exportFormat.fileExtension)
             .lastPathComponent
     }
     
     static var exportContentType: UTType {
-        OpenShotPreferences.autoCompress ? .jpeg : .png
+        OpenShotPreferences.exportFormat.contentType
     }
     
-    private static func exportCompressedJPEG(from sourceURL: URL, to destinationURL: URL) throws {
+    private static func exportImage(from sourceURL: URL, to destinationURL: URL, contentType: UTType) throws {
         if FileManager.default.fileExists(atPath: destinationURL.path) {
             try FileManager.default.removeItem(at: destinationURL)
         }
@@ -116,14 +167,14 @@ enum ScreenshotFileActions {
         
         guard let destination = CGImageDestinationCreateWithURL(
             destinationURL as CFURL,
-            UTType.jpeg.identifier as CFString,
+            contentType.identifier as CFString,
             1,
             nil
         ) else {
             throw CocoaError(.fileWriteUnknown)
         }
         
-        let options: [CFString: Any] = [
+        let options: [CFString: Any] = contentType == .png ? [:] : [
             kCGImageDestinationLossyCompressionQuality: OpenShotPreferences.compressionQuality
         ]
         

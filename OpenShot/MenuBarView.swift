@@ -34,6 +34,14 @@ struct MenuBarView: View {
             .keyboardShortcut("3", modifiers: [.option])
             
             Divider()
+
+            Button {
+                openWindow(id: "HISTORY")
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                Label("History", systemImage: "clock.arrow.circlepath")
+            }
+            .keyboardShortcut("h", modifiers: [.command])
             
             Button {
                 openWindow(id: "SETTINGS")

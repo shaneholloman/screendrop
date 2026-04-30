@@ -69,7 +69,7 @@ enum AnnotationRenderer {
         }
 
         var options: CFDictionary?
-        if contentType == .jpeg {
+        if contentType != .png {
             options = [
                 kCGImageDestinationLossyCompressionQuality: OpenShotPreferences.compressionQuality
             ] as CFDictionary

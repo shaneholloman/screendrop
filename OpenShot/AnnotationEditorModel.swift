@@ -95,6 +95,7 @@ final class AnnotationEditorModel {
             return
         }
 
+        applyAnnotationPreset()
         sourceURL = url
         imageSize = ScreenshotImageLoader.imageSize(at: url) ?? .zero
         previewImage = ScreenshotImageLoader.downsampledImage(at: url, maxPixelSize: 2400)
@@ -394,6 +395,7 @@ final class AnnotationEditorModel {
 
     func setSwatch(_ swatch: AnnotationSwatch) {
         selectedSwatch = swatch
+        saveAnnotationPreset()
 
         if !selectedItemIDs.isEmpty {
             history.push(items)
@@ -410,6 +412,7 @@ final class AnnotationEditorModel {
 
     func setStrokeWidth(_ strokeWidth: CGFloat) {
         self.strokeWidth = strokeWidth
+        saveAnnotationPreset()
 
         if !selectedItemIDs.isEmpty {
             history.push(items)
@@ -426,6 +429,7 @@ final class AnnotationEditorModel {
 
     func setRedactionDensity(_ redactionDensity: CGFloat) {
         self.redactionDensity = redactionDensity
+        saveAnnotationPreset()
 
         if !selectedItemIDs.isEmpty {
             history.push(items)
@@ -445,6 +449,7 @@ final class AnnotationEditorModel {
         editingTextItemID = nil
         isTextPlacementArmed = tool == .text
         statePath = AnnotationToolState.idle.path(for: tool)
+        saveAnnotationPreset()
     }
 
     func deleteSelectedAnnotation() {
@@ -568,6 +573,7 @@ final class AnnotationEditorModel {
     func setTextFontSize(_ pointSize: CGFloat) {
         let clamped = max(pointSize, AnnotationTextMetrics.minimumFontSize)
         textFontSize = clamped
+        saveAnnotationPreset()
 
         guard let selectedItemID, selectedTextItem != nil else { return }
         guard imageSize.height > 0 else { return }
@@ -580,6 +586,7 @@ final class AnnotationEditorModel {
 
     func setTextFontName(_ name: String) {
         textFontName = name
+        saveAnnotationPreset()
         guard let selectedItemID, selectedTextItem != nil else { return }
         history.push(items)
         updateItem(id: selectedItemID) { item in
@@ -589,6 +596,7 @@ final class AnnotationEditorModel {
 
     func setTextBold(_ bold: Bool) {
         textIsBold = bold
+        saveAnnotationPreset()
         guard let selectedItemID, selectedTextItem != nil else { return }
         history.push(items)
         updateItem(id: selectedItemID) { item in
@@ -598,6 +606,7 @@ final class AnnotationEditorModel {
 
     func setTextItalic(_ italic: Bool) {
         textIsItalic = italic
+        saveAnnotationPreset()
         guard let selectedItemID, selectedTextItem != nil else { return }
         history.push(items)
         updateItem(id: selectedItemID) { item in
@@ -607,6 +616,7 @@ final class AnnotationEditorModel {
 
     func setTextUnderline(_ underline: Bool) {
         textIsUnderline = underline
+        saveAnnotationPreset()
         guard let selectedItemID, selectedTextItem != nil else { return }
         history.push(items)
         updateItem(id: selectedItemID) { item in
@@ -616,6 +626,7 @@ final class AnnotationEditorModel {
 
     func setTextAlignment(_ alignment: NSTextAlignment) {
         textAlignment = alignment
+        saveAnnotationPreset()
         guard let selectedItemID, selectedTextItem != nil else { return }
         history.push(items)
         updateItem(id: selectedItemID) { item in
@@ -1001,6 +1012,38 @@ final class AnnotationEditorModel {
             .compactMap { Int($0.text) }
             .max() ?? 0
         nextNumberedCircleValue = currentMaximum + 1
+    }
+
+    private func applyAnnotationPreset() {
+        let preset = AnnotationPresetStore.load()
+        selectedTool = preset.selectedTool
+        selectedSwatch = preset.swatch
+        strokeWidth = CGFloat(preset.strokeWidth)
+        redactionDensity = CGFloat(preset.redactionDensity)
+        textFontName = preset.textFontName
+        textFontSize = CGFloat(preset.textFontSize)
+        textIsBold = preset.textIsBold
+        textIsItalic = preset.textIsItalic
+        textIsUnderline = preset.textIsUnderline
+        textAlignment = preset.textAlignment
+    }
+
+    private func saveAnnotationPreset() {
+        let customSwatch = AnnotationSwatch.allCases.contains(selectedSwatch) ? nil : CodableSwatch(swatch: selectedSwatch)
+        let preset = AnnotationStylePreset(
+            selectedToolRawValue: selectedTool.rawValue,
+            swatchID: selectedSwatch.id,
+            customSwatch: customSwatch,
+            strokeWidth: Double(strokeWidth),
+            redactionDensity: Double(redactionDensity),
+            textFontName: textFontName,
+            textFontSize: Double(textFontSize),
+            textIsBold: textIsBold,
+            textIsItalic: textIsItalic,
+            textIsUnderline: textIsUnderline,
+            textAlignmentRawValue: textAlignment.rawValue
+        )
+        AnnotationPresetStore.save(preset)
     }
 
     private func midpoint(_ lhs: CGPoint, _ rhs: CGPoint) -> CGPoint {
