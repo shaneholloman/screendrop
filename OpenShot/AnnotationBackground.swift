@@ -170,6 +170,94 @@ struct AnnotationBackgroundGradient: Identifiable, Equatable, Hashable {
             ],
             startPoint: .bottomLeading,
             endPoint: .topTrailing
+        ),
+        AnnotationBackgroundGradient(
+            id: "ember",
+            title: "Ember",
+            colors: [
+                AnnotationBackgroundColor("ember-a", title: "Ember A", red: 0.18, green: 0.03, blue: 0.08),
+                AnnotationBackgroundColor("ember-b", title: "Ember B", red: 0.86, green: 0.17, blue: 0.18),
+                AnnotationBackgroundColor("ember-c", title: "Ember C", red: 1.00, green: 0.67, blue: 0.25)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        ),
+        AnnotationBackgroundGradient(
+            id: "violet",
+            title: "Violet",
+            colors: [
+                AnnotationBackgroundColor("violet-a", title: "Violet A", red: 0.24, green: 0.08, blue: 0.51),
+                AnnotationBackgroundColor("violet-b", title: "Violet B", red: 0.59, green: 0.22, blue: 0.94),
+                AnnotationBackgroundColor("violet-c", title: "Violet C", red: 0.96, green: 0.42, blue: 0.74)
+            ],
+            startPoint: .top,
+            endPoint: .bottomTrailing
+        ),
+        AnnotationBackgroundGradient(
+            id: "seaglass",
+            title: "Sea Glass",
+            colors: [
+                AnnotationBackgroundColor("seaglass-a", title: "Sea Glass A", red: 0.43, green: 0.86, blue: 0.75),
+                AnnotationBackgroundColor("seaglass-b", title: "Sea Glass B", red: 0.25, green: 0.62, blue: 0.80),
+                AnnotationBackgroundColor("seaglass-c", title: "Sea Glass C", red: 0.22, green: 0.35, blue: 0.75)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        ),
+        AnnotationBackgroundGradient(
+            id: "citrus",
+            title: "Citrus",
+            colors: [
+                AnnotationBackgroundColor("citrus-a", title: "Citrus A", red: 0.99, green: 0.91, blue: 0.30),
+                AnnotationBackgroundColor("citrus-b", title: "Citrus B", red: 0.44, green: 0.78, blue: 0.29),
+                AnnotationBackgroundColor("citrus-c", title: "Citrus C", red: 0.12, green: 0.58, blue: 0.42)
+            ],
+            startPoint: .topTrailing,
+            endPoint: .bottomLeading
+        ),
+        AnnotationBackgroundGradient(
+            id: "amethyst",
+            title: "Amethyst",
+            colors: [
+                AnnotationBackgroundColor("amethyst-a", title: "Amethyst A", red: 0.10, green: 0.08, blue: 0.28),
+                AnnotationBackgroundColor("amethyst-b", title: "Amethyst B", red: 0.35, green: 0.15, blue: 0.65),
+                AnnotationBackgroundColor("amethyst-c", title: "Amethyst C", red: 0.76, green: 0.39, blue: 0.95)
+            ],
+            startPoint: .bottomLeading,
+            endPoint: .topTrailing
+        ),
+        AnnotationBackgroundGradient(
+            id: "sorbet",
+            title: "Sorbet",
+            colors: [
+                AnnotationBackgroundColor("sorbet-a", title: "Sorbet A", red: 1.00, green: 0.49, blue: 0.51),
+                AnnotationBackgroundColor("sorbet-b", title: "Sorbet B", red: 1.00, green: 0.74, blue: 0.48),
+                AnnotationBackgroundColor("sorbet-c", title: "Sorbet C", red: 0.56, green: 0.78, blue: 0.98)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        ),
+        AnnotationBackgroundGradient(
+            id: "mineral",
+            title: "Mineral",
+            colors: [
+                AnnotationBackgroundColor("mineral-a", title: "Mineral A", red: 0.93, green: 0.96, blue: 0.95),
+                AnnotationBackgroundColor("mineral-b", title: "Mineral B", red: 0.64, green: 0.72, blue: 0.82),
+                AnnotationBackgroundColor("mineral-c", title: "Mineral C", red: 0.33, green: 0.42, blue: 0.55)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        ),
+        AnnotationBackgroundGradient(
+            id: "dawn",
+            title: "Dawn",
+            colors: [
+                AnnotationBackgroundColor("dawn-a", title: "Dawn A", red: 0.98, green: 0.62, blue: 0.77),
+                AnnotationBackgroundColor("dawn-b", title: "Dawn B", red: 0.98, green: 0.82, blue: 0.47),
+                AnnotationBackgroundColor("dawn-c", title: "Dawn C", red: 0.42, green: 0.71, blue: 0.96)
+            ],
+            startPoint: .bottomLeading,
+            endPoint: .topTrailing
         )
     ]
 }

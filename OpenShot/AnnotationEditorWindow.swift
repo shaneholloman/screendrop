@@ -65,8 +65,7 @@ struct AnnotationEditorWindow: View {
 
     private var mainContent: some View {
         ZStack {
-            Rectangle()
-                .fill(.regularMaterial)
+            AnnotationEditorWorkspaceBackground()
 
             if let previewImage = model.previewImage, model.imageSize != .zero {
                 AnnotationCanvas(model: model, image: previewImage)
@@ -185,6 +184,37 @@ private enum AnnotationEditorActivationPolicy {
         Task { @MainActor in
             guard activeWindowCount == 0 else { return }
             NSApp.setActivationPolicy(.accessory)
+        }
+    }
+}
+
+private struct AnnotationEditorWorkspaceBackground: View {
+    private let dotSpacing: CGFloat = 18
+    private let dotRadius: CGFloat = 1.15
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+
+            Canvas { context, size in
+                var path = Path()
+                let offset = dotSpacing / 2
+
+                stride(from: offset, through: size.width, by: dotSpacing).forEach { x in
+                    stride(from: offset, through: size.height, by: dotSpacing).forEach { y in
+                        path.addEllipse(in: CGRect(
+                            x: x - dotRadius,
+                            y: y - dotRadius,
+                            width: dotRadius * 2,
+                            height: dotRadius * 2
+                        ))
+                    }
+                }
+
+                context.fill(path, with: .color(Color.secondary.opacity(0.14)))
+            }
+            .allowsHitTesting(false)
         }
     }
 }
@@ -2341,7 +2371,7 @@ private struct AnnotationEditorInspector: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
+            ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
                     // MARK: Tools
                     VStack(alignment: .leading, spacing: 10) {
@@ -2413,6 +2443,7 @@ private struct AnnotationEditorInspector: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 14)
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .scrollContentBackground(.hidden)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2540,7 +2571,7 @@ private struct AnnotationBackgroundInspector: View {
     @Binding var settings: AnnotationBackgroundSettings
     let onPickWallpaper: () -> Void
 
-    private let gradientColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+    private let gradientColumns = Array(repeating: GridItem(.flexible(minimum: 20), spacing: 5), count: 8)
     private let wallpaperColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
     private let colorColumns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 8)
     private let alignmentColumns = Array(repeating: GridItem(.fixed(28), spacing: 4), count: 3)
@@ -2568,12 +2599,12 @@ private struct AnnotationBackgroundInspector: View {
             // Gradients
             backgroundSectionTitle("Gradients")
                 .padding(.bottom, 8)
-            LazyVGrid(columns: gradientColumns, spacing: 8) {
+            LazyVGrid(columns: gradientColumns, spacing: 5) {
                 ForEach(AnnotationBackgroundGradient.presets) { gradient in
                     Button {
                         settings.style = .gradient(gradient)
                     } label: {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
                             .fill(LinearGradient(
                                 colors: gradient.colors.map(\.color),
                                 startPoint: gradient.startPoint,
@@ -2581,10 +2612,10 @@ private struct AnnotationBackgroundInspector: View {
                             ))
                             .aspectRatio(1, contentMode: .fit)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
                                     .stroke(settings.style == .gradient(gradient) ? Color.white.opacity(0.8) : Color.white.opacity(0.08), lineWidth: settings.style == .gradient(gradient) ? 2 : 0.5)
                             )
-                            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .help(gradient.title)
@@ -2823,17 +2854,8 @@ private struct AnnotationTextStyleControls: View {
         VStack(spacing: 10) {
             // Font family + color swatch
             HStack(spacing: 6) {
-                Picker("", selection: Binding(
-                    get: { model.selectedTextFontName },
-                    set: { model.selectedTextFontName = $0 }
-                )) {
-                    ForEach(fontFamilies, id: \.self) { family in
-                        Text(family).tag(family)
-                    }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(maxWidth: .infinity)
+                fontFamilyMenu
+                    .frame(minWidth: 0, maxWidth: .infinity)
 
                 Menu {
                     ForEach(AnnotationSwatch.allCases) { swatch in
@@ -2978,6 +3000,49 @@ private struct AnnotationTextStyleControls: View {
                 commitFontSizeText()
             }
         }
+    }
+
+    private var fontFamilyMenu: some View {
+        Menu {
+            ForEach(fontFamilies, id: \.self) { family in
+                Button {
+                    model.selectedTextFontName = family
+                } label: {
+                    if model.selectedTextFontName == family {
+                        Label(family, systemImage: "checkmark")
+                    } else {
+                        Text(family)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(model.selectedTextFontName)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .help("Font family")
     }
 
     private func syncFontSizeText() {
