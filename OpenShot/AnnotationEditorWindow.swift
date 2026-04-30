@@ -51,7 +51,8 @@ struct AnnotationEditorWindow: View {
             .background(AnnotationKeyCommandHandler(
                 onDelete: model.deleteSelectedAnnotation,
                 onUndo: model.undo,
-                onRedo: model.redo
+                onRedo: model.redo,
+                onSelectTool: model.selectTool
             ))
             .inspector(isPresented: $isInspectorPresented) {
                 AnnotationEditorInspector(
@@ -258,7 +259,7 @@ private final class AnnotationEditorModel {
 
     // Text style defaults (applied to new text items, updated when selecting existing text)
     var textFontName: String = AnnotationTextMetrics.defaultFontName
-    var textFontSize: CGFloat = 24
+    var textFontSize: CGFloat = 48
     var textIsBold: Bool = true
     var textIsItalic: Bool = false
     var textIsUnderline: Bool = false
@@ -3210,62 +3211,42 @@ private struct AnnotationTextStyleControls: View {
 
                 Spacer()
 
-                HStack(spacing: 0) {
-                    styleToggle(
-                        label: "B",
-                        font: .system(size: 12, weight: .bold),
-                        isActive: model.selectedTextIsBold
-                    ) {
-                        model.selectedTextIsBold.toggle()
+                AnnotationInspectorSegmentedToggles(
+                    options: TextStyleSegment.allCases,
+                    isSelected: { segment in
+                        switch segment {
+                        case .bold: model.selectedTextIsBold
+                        case .italic: model.selectedTextIsItalic
+                        case .underline: model.selectedTextIsUnderline
+                        }
+                    },
+                    onToggle: { segment in
+                        switch segment {
+                        case .bold: model.selectedTextIsBold.toggle()
+                        case .italic: model.selectedTextIsItalic.toggle()
+                        case .underline: model.selectedTextIsUnderline.toggle()
+                        }
+                    },
+                    label: { segment in
+                        Text(segment.title)
+                            .font(segment.font)
+                            .underline(segment == .underline)
                     }
-
-                    Divider().frame(height: 14)
-
-                    styleToggle(
-                        label: "I",
-                        font: .system(size: 12, weight: .regular, design: .serif).italic(),
-                        isActive: model.selectedTextIsItalic
-                    ) {
-                        model.selectedTextIsItalic.toggle()
-                    }
-
-                    Divider().frame(height: 14)
-
-                    styleToggle(
-                        label: "U",
-                        font: .system(size: 12, weight: .regular),
-                        isActive: model.selectedTextIsUnderline,
-                        underline: true
-                    ) {
-                        model.selectedTextIsUnderline.toggle()
-                    }
-                }
-                .frame(height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
-                )
+                .frame(width: 96)
             }
 
             // Text alignment
-            HStack(spacing: 0) {
-                alignmentButton(.left, icon: "text.alignleft")
-                alignmentButton(.center, icon: "text.aligncenter")
-                alignmentButton(.right, icon: "text.alignright")
-                alignmentButton(.justified, icon: "text.justify.leading")
-            }
-            .frame(height: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
+            AnnotationInspectorSegmentedControl(
+                options: TextAlignmentSegment.allCases,
+                selection: Binding(
+                    get: { TextAlignmentSegment(model.selectedTextAlignment) },
+                    set: { model.selectedTextAlignment = $0.nsTextAlignment }
+                ),
+                label: { segment in
+                    Image(systemName: segment.systemImage)
+                        .font(.system(size: 12, weight: .semibold))
+                }
             )
         }
         .frame(maxWidth: .infinity)
@@ -3354,38 +3335,177 @@ private struct AnnotationTextStyleControls: View {
         syncFontSizeText()
     }
 
-    private func styleToggle(
-        label: String,
-        font: Font,
-        isActive: Bool,
-        underline: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(font)
-                .underline(underline)
-                .frame(width: 28, height: 26)
-                .contentShape(Rectangle())
+}
+
+private enum TextStyleSegment: CaseIterable, Hashable {
+    case bold
+    case italic
+    case underline
+
+    var title: String {
+        switch self {
+        case .bold: "B"
+        case .italic: "I"
+        case .underline: "U"
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(isActive ? Color.accentColor : .primary.opacity(0.7))
-        .background(isActive ? Color.accentColor.opacity(0.12) : .clear)
     }
 
-    private func alignmentButton(_ alignment: NSTextAlignment, icon: String) -> some View {
-        Button {
-            model.selectedTextAlignment = alignment
+    var font: Font {
+        switch self {
+        case .bold:
+            .system(size: 12, weight: .bold)
+        case .italic:
+            .system(size: 12, weight: .regular, design: .serif).italic()
+        case .underline:
+            .system(size: 12, weight: .regular)
+        }
+    }
+}
+
+private enum TextAlignmentSegment: CaseIterable, Hashable {
+    case left
+    case center
+    case right
+    case justified
+
+    init(_ alignment: NSTextAlignment) {
+        switch alignment {
+        case .center:
+            self = .center
+        case .right:
+            self = .right
+        case .justified:
+            self = .justified
+        default:
+            self = .left
+        }
+    }
+
+    var nsTextAlignment: NSTextAlignment {
+        switch self {
+        case .left: .left
+        case .center: .center
+        case .right: .right
+        case .justified: .justified
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .left: "text.alignleft"
+        case .center: "text.aligncenter"
+        case .right: "text.alignright"
+        case .justified: "text.justify.leading"
+        }
+    }
+}
+
+private struct AnnotationInspectorSegmentedControl<Option: Hashable, Label: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let options: [Option]
+    @Binding var selection: Option
+    @ViewBuilder let label: (Option) -> Label
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.self) { option in
+                segment(for: option)
+            }
+        }
+        .padding(3)
+        .frame(height: 34)
+        .background(Capsule().fill(controlBackground))
+        .overlay(Capsule().stroke(controlBorder, lineWidth: 0.5))
+    }
+
+    private func segment(for option: Option) -> some View {
+        let isSelected = selection == option
+
+        return Button {
+            selection = option
         } label: {
-            Image(systemName: icon)
-                .font(.system(size: 12))
+            label(option)
                 .frame(maxWidth: .infinity)
-                .frame(height: 26)
-                .contentShape(Rectangle())
+                .frame(height: 28)
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(model.selectedTextAlignment == alignment ? Color.accentColor : .primary.opacity(0.5))
-        .background(model.selectedTextAlignment == alignment ? Color.accentColor.opacity(0.12) : .clear)
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .background {
+            if isSelected {
+                Capsule()
+                    .fill(Color.accentColor)
+            }
+        }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var controlBackground: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.07)
+            : Color(nsColor: .controlBackgroundColor).opacity(0.65)
+    }
+
+    private var controlBorder: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.12)
+            : Color(nsColor: .separatorColor).opacity(0.45)
+    }
+}
+
+private struct AnnotationInspectorSegmentedToggles<Option: Hashable, Label: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let options: [Option]
+    let isSelected: (Option) -> Bool
+    let onToggle: (Option) -> Void
+    @ViewBuilder let label: (Option) -> Label
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.self) { option in
+                segment(for: option)
+            }
+        }
+        .padding(3)
+        .frame(height: 34)
+        .background(Capsule().fill(controlBackground))
+        .overlay(Capsule().stroke(controlBorder, lineWidth: 0.5))
+    }
+
+    private func segment(for option: Option) -> some View {
+        let selected = isSelected(option)
+
+        return Button {
+            onToggle(option)
+        } label: {
+            label(option)
+                .frame(maxWidth: .infinity)
+                .frame(height: 28)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(selected ? Color.white : Color.primary)
+        .background {
+            if selected {
+                Capsule()
+                    .fill(Color.accentColor)
+            }
+        }
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var controlBackground: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.07)
+            : Color(nsColor: .controlBackgroundColor).opacity(0.65)
+    }
+
+    private var controlBorder: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.12)
+            : Color(nsColor: .separatorColor).opacity(0.45)
     }
 }
 
@@ -3443,12 +3563,14 @@ private struct AnnotationKeyCommandHandler: NSViewRepresentable {
     let onDelete: () -> Void
     let onUndo: () -> Void
     let onRedo: () -> Void
+    let onSelectTool: (AnnotationTool) -> Void
 
     func makeNSView(context: Context) -> AnnotationKeyCommandHandlerView {
         let view = AnnotationKeyCommandHandlerView()
         view.onDelete = onDelete
         view.onUndo = onUndo
         view.onRedo = onRedo
+        view.onSelectTool = onSelectTool
         return view
     }
 
@@ -3456,6 +3578,7 @@ private struct AnnotationKeyCommandHandler: NSViewRepresentable {
         nsView.onDelete = onDelete
         nsView.onUndo = onUndo
         nsView.onRedo = onRedo
+        nsView.onSelectTool = onSelectTool
     }
 }
 
@@ -3463,6 +3586,7 @@ private final class AnnotationKeyCommandHandlerView: NSView {
     var onDelete: (() -> Void)?
     var onUndo: (() -> Void)?
     var onRedo: (() -> Void)?
+    var onSelectTool: ((AnnotationTool) -> Void)?
 
     private var localKeyMonitor: Any?
 
@@ -3504,6 +3628,11 @@ private final class AnnotationKeyCommandHandlerView: NSView {
                 return nil
             }
 
+            if let tool = Self.toolShortcut(for: event) {
+                self.onSelectTool?(tool)
+                return nil
+            }
+
             return event
         }
     }
@@ -3527,6 +3656,27 @@ private final class AnnotationKeyCommandHandlerView: NSView {
         event.modifierFlags.contains(.command)
             && event.modifierFlags.contains(.shift)
             && event.charactersIgnoringModifiers?.lowercased() == "z"
+    }
+
+    private static func toolShortcut(for event: NSEvent) -> AnnotationTool? {
+        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+              let character = event.charactersIgnoringModifiers?.lowercased(),
+              character.count == 1 else {
+            return nil
+        }
+
+        switch character {
+        case "r": return .rectangle
+        case "o": return .ellipse
+        case "t": return .text
+        case "l": return .line
+        case "a": return .arrow
+        case "p": return .pixelate
+        case "b": return .blur
+        case "1": return .numberedCircle
+        case "h": return .select
+        default: return nil
+        }
     }
 }
 
