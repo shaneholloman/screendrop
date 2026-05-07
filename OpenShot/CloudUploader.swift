@@ -36,6 +36,9 @@ final class CloudUploader: NSObject {
     /// Active URLSession delegate adapters keyed by task ID.
     private var delegates: [Int: UploadDelegate] = [:]
     
+    /// Active upload tasks keyed by item ID (for cancellation).
+    private var activeTasks: [UUID: URLSessionUploadTask] = [:]
+    
     private var _session: URLSession?
     
     private var session: URLSession {
@@ -103,11 +106,13 @@ final class CloudUploader: NSObject {
         
         do {
             let result = try await performUpload(request: request, body: body, itemID: itemID)
+            activeTasks.removeValue(forKey: itemID)
             uploadingItems.remove(itemID)
             uploadProgress.removeValue(forKey: itemID)
             uploadedURLs[itemID] = result.url
             return result
         } catch {
+            activeTasks.removeValue(forKey: itemID)
             uploadingItems.remove(itemID)
             uploadProgress.removeValue(forKey: itemID)
             failedItemIDs.insert(itemID)
@@ -174,9 +179,17 @@ final class CloudUploader: NSObject {
             
             let delegate = UploadDelegate(itemID: itemID)
             delegates[task.taskIdentifier] = delegate
+            activeTasks[itemID] = task
             
             task.resume()
         }
+    }
+    
+    func cancelUpload(for itemID: UUID) {
+        activeTasks[itemID]?.cancel()
+        activeTasks.removeValue(forKey: itemID)
+        uploadingItems.remove(itemID)
+        uploadProgress.removeValue(forKey: itemID)
     }
     
     private func mimeTypeForFile(_ url: URL) -> String {
@@ -220,10 +233,11 @@ extension CloudUploader: URLSessionTaskDelegate {
         let taskID = task.taskIdentifier
         MainActor.assumeIsolated {
             guard let delegate = delegates[taskID] else { return }
-            let progress = totalBytesExpectedToSend > 0
+            let rawProgress = totalBytesExpectedToSend > 0
                 ? Double(totalBytesSent) / Double(totalBytesExpectedToSend)
                 : 0
-            uploadProgress[delegate.itemID] = progress
+            // Cap at 90% — the remaining 10% covers server-side processing
+            uploadProgress[delegate.itemID] = rawProgress * 0.9
         }
     }
 }

@@ -171,6 +171,7 @@ private struct PreviewCardView: View {
     @State private var cloudUploader = CloudUploader.shared
     @State private var shakeOffset: CGFloat = 0
     @State private var showUploadFailed = false
+    @State private var showCheckmark = false
     
     var body: some View {
         Image(nsImage: item.previewImage)
@@ -201,6 +202,16 @@ private struct PreviewCardView: View {
                     try? await Task.sleep(for: .seconds(3))
                     withAnimation(.easeOut(duration: 0.25)) {
                         showUploadFailed = false
+                    }
+                }
+            }
+            .onChange(of: cloudUploader.uploadedURLs[item.id] != nil) { _, uploaded in
+                guard uploaded else { return }
+                showCheckmark = true
+                Task {
+                    try? await Task.sleep(for: .seconds(2.5))
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        showCheckmark = false
                     }
                 }
             }
@@ -278,28 +289,46 @@ private struct PreviewCardView: View {
 
             // Cloud upload button (bottom-right)
             if item.kind == .image, cloudUploader.isConfigured {
-                if let uploadedURL = cloudUploader.uploadedURLs[item.id] {
+                if cloudUploader.uploadingItems.contains(item.id) {
+                    // Cancel button while uploading
                     Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(uploadedURL, forType: .string)
+                        cloudUploader.cancelUpload(for: item.id)
                     } label: {
-                        Image(systemName: "checkmark.circle.fill")
+                        Image(systemName: "stop.circle.fill")
                             .font(.title2)
-                            .foregroundStyle(.black, .green)
+                            .foregroundStyle(.black, .white)
                     }
                     .buttonStyle(.plain)
-                    .help("Link copied! Click to copy again")
+                    .help("Cancel upload")
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     .padding(10)
-                } else if cloudUploader.uploadingItems.contains(item.id) {
-                    // progress bar shown in center (replaces Copy/Save)
-                    EmptyView()
                 } else if showUploadFailed {
                     Image(systemName: "xmark.circle.fill")
                         .font(.title2)
                         .foregroundStyle(.white, .red)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .padding(10)
+                } else if showCheckmark {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.black, .green)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(10)
+                } else if cloudUploader.uploadedURLs[item.id] != nil {
+                    Button {
+                        if let url = cloudUploader.uploadedURLs[item.id] {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(url, forType: .string)
+                        }
+                    } label: {
+                        Image(systemName: "link.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.black, .white)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy share link")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(10)
                 } else {
                     Button(action: onUpload) {
                         Image(systemName: "cloud.circle.fill")
