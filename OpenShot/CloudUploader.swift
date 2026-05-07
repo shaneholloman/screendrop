@@ -30,6 +30,9 @@ final class CloudUploader: NSObject {
     /// Completed upload URLs keyed by preview item ID.
     private(set) var uploadedURLs: [UUID: String] = [:]
     
+    /// Set of item IDs whose upload failed (cleared after shake animation).
+    private(set) var failedItemIDs: Set<UUID> = []
+    
     /// Active URLSession delegate adapters keyed by task ID.
     private var delegates: [Int: UploadDelegate] = [:]
     
@@ -107,6 +110,7 @@ final class CloudUploader: NSObject {
         } catch {
             uploadingItems.remove(itemID)
             uploadProgress.removeValue(forKey: itemID)
+            failedItemIDs.insert(itemID)
             throw error
         }
     }
@@ -115,6 +119,11 @@ final class CloudUploader: NSObject {
         uploadingItems.remove(itemID)
         uploadProgress.removeValue(forKey: itemID)
         uploadedURLs.removeValue(forKey: itemID)
+        failedItemIDs.remove(itemID)
+    }
+    
+    func clearFailed(for itemID: UUID) {
+        failedItemIDs.remove(itemID)
     }
     
     // MARK: - Private

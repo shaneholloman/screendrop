@@ -169,6 +169,8 @@ private struct PreviewCardView: View {
     @State private var isHovered = false
     @State private var isPresented = false
     @State private var cloudUploader = CloudUploader.shared
+    @State private var shakeOffset: CGFloat = 0
+    @State private var showUploadFailed = false
     
     var body: some View {
         Image(nsImage: item.previewImage)
@@ -189,7 +191,19 @@ private struct PreviewCardView: View {
             .shadow(color: .black.opacity(0.5), radius: 30, x: 0, y: 12)
             .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 4)
             .opacity(isHidden ? 0 : 1)
-            .offset(x: horizontalOffset)
+            .offset(x: horizontalOffset + shakeOffset)
+            .onChange(of: cloudUploader.failedItemIDs.contains(item.id)) { _, failed in
+                guard failed else { return }
+                shakeCard()
+                showUploadFailed = true
+                cloudUploader.clearFailed(for: item.id)
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        showUploadFailed = false
+                    }
+                }
+            }
             .draggable(item.url) {
                 Image(nsImage: item.previewImage)
                     .resizable()
@@ -283,6 +297,12 @@ private struct PreviewCardView: View {
                         .scaleEffect(0.7)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .padding(10)
+                } else if showUploadFailed {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.white, .red)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(10)
                 } else {
                     Button(action: onUpload) {
                         Image(systemName: "cloud.circle.fill")
@@ -334,6 +354,21 @@ private struct PreviewCardView: View {
     
     private var horizontalOffset: CGFloat {
         isPresented && !isDismissing ? 0 : previewCardSlideOffset
+    }
+    
+    private func shakeCard() {
+        let steps: [(CGFloat, Double)] = [
+            (-8, 0.06), (7, 0.06), (-5, 0.05), (4, 0.05), (-2, 0.04), (0, 0.04)
+        ]
+        var delay = 0.0
+        for (offset, duration) in steps {
+            delay += duration
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                withAnimation(.easeInOut(duration: duration)) {
+                    shakeOffset = offset
+                }
+            }
+        }
     }
 }
 
