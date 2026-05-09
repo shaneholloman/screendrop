@@ -27,6 +27,12 @@ final class RecordingControlPresenter {
         panel?.orderOut(nil)
     }
 
+    func containsScreenPoint(_ point: CGPoint) -> Bool {
+        guard let panel, panel.isVisible else { return false }
+
+        return panel.frame.contains(point)
+    }
+
     private func makePanel() -> NSPanel {
         let panel = RecordingControlPanel(
             contentRect: CGRect(origin: .zero, size: panelSize),

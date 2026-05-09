@@ -131,8 +131,16 @@ final class ScreenRecordingManager {
                 let outputURL = Self.generateTemporaryRecordingURL()
                 let content = try await ScreenRecordingCapture.availableContent()
                 let target = try Self.captureTarget(for: source, content: content)
+                let mouseIndicatorStore = OpenShotPreferences.showRecordingMouseIndicators
+                    ? RecordingMouseIndicatorController.shared.start(mapping: target.mouseIndicatorMapping)
+                    : nil
 
-                try writer.setupWriter(outputURL: outputURL, videoWidth: target.width, videoHeight: target.height)
+                try writer.setupWriter(
+                    outputURL: outputURL,
+                    videoWidth: target.width,
+                    videoHeight: target.height,
+                    mouseIndicatorStore: mouseIndicatorStore
+                )
 
                 capture.onVideoFrame = { [writer] sampleBuffer in
                     writer.writeVideoSample(sampleBuffer)
@@ -168,6 +176,7 @@ final class ScreenRecordingManager {
         guard state == .recording else { return }
 
         writer.pause()
+        RecordingMouseIndicatorController.shared.pause()
         pausedAt = Date()
         state = .paused
         updateElapsedTime()
@@ -182,6 +191,7 @@ final class ScreenRecordingManager {
 
         self.pausedAt = nil
         writer.resume()
+        RecordingMouseIndicatorController.shared.resume()
         state = .recording
         updateElapsedTime()
     }
@@ -298,6 +308,7 @@ final class ScreenRecordingManager {
         timer = nil
         capture.onVideoFrame = nil
         capture.onError = nil
+        RecordingMouseIndicatorController.shared.stop()
         outputURL = nil
         displayID = nil
         currentSource = nil
@@ -323,6 +334,7 @@ final class ScreenRecordingManager {
         let filter: SCContentFilter
         let sourceSize: CGSize
         var sourceRect: CGRect?
+        let captureRect: CGRect
         let displayID: CGDirectDisplayID?
 
         switch source.kind {
@@ -330,17 +342,25 @@ final class ScreenRecordingManager {
             let freshDisplay = content.displays.first(where: { $0.displayID == display.displayID }) ?? display
             filter = ScreenRecordingCapture.displayFilter(display: freshDisplay, content: content)
             sourceSize = CGSize(width: freshDisplay.width, height: freshDisplay.height)
+            captureRect = freshDisplay.frame
             displayID = freshDisplay.displayID
         case .window(let window):
             let freshWindow = content.windows.first(where: { $0.windowID == window.windowID }) ?? window
             filter = SCContentFilter(desktopIndependentWindow: freshWindow)
             sourceSize = freshWindow.frame.size
+            captureRect = freshWindow.frame
             displayID = nil
         case .area(let display, let rect):
             let freshDisplay = content.displays.first(where: { $0.displayID == display.displayID }) ?? display
             filter = ScreenRecordingCapture.displayFilter(display: freshDisplay, content: content)
             sourceRect = rect
             sourceSize = rect.size
+            captureRect = CGRect(
+                x: freshDisplay.frame.minX + rect.minX,
+                y: freshDisplay.frame.minY + rect.minY,
+                width: rect.width,
+                height: rect.height
+            )
             displayID = freshDisplay.displayID
         }
 
@@ -348,7 +368,19 @@ final class ScreenRecordingManager {
         let width = max(2, Int((sourceSize.width * scaleFactor).rounded(.toNearestOrAwayFromZero)))
         let height = max(2, Int((sourceSize.height * scaleFactor).rounded(.toNearestOrAwayFromZero)))
         let configuration = ScreenRecordingCapture.buildConfiguration(width: width, height: height, sourceRect: sourceRect)
-        return ScreenRecordingCaptureTarget(filter: filter, configuration: configuration, width: width, height: height, displayID: displayID)
+        let mouseIndicatorMapping = RecordingMouseIndicatorMapping(
+            captureRect: captureRect,
+            pixelWidth: width,
+            pixelHeight: height
+        )
+        return ScreenRecordingCaptureTarget(
+            filter: filter,
+            configuration: configuration,
+            width: width,
+            height: height,
+            displayID: displayID,
+            mouseIndicatorMapping: mouseIndicatorMapping
+        )
     }
 
     private static func generateTemporaryRecordingURL() -> URL {
@@ -365,6 +397,7 @@ private struct ScreenRecordingCaptureTarget {
     let width: Int
     let height: Int
     let displayID: CGDirectDisplayID?
+    let mouseIndicatorMapping: RecordingMouseIndicatorMapping
 }
 
 nonisolated final class ScreenRecordingCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
@@ -463,8 +496,14 @@ nonisolated private final class ScreenRecordingWriter: @unchecked Sendable {
     private var totalPauseDuration: CMTime = .zero
     private var latestSampleTime: CMTime?
     private var needsPauseDurationUpdate = false
+    private var mouseIndicatorStore: RecordingMouseIndicatorStore?
 
-    func setupWriter(outputURL: URL, videoWidth: Int, videoHeight: Int) throws {
+    func setupWriter(
+        outputURL: URL,
+        videoWidth: Int,
+        videoHeight: Int,
+        mouseIndicatorStore: RecordingMouseIndicatorStore?
+    ) throws {
         try? FileManager.default.removeItem(at: outputURL)
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
@@ -501,6 +540,7 @@ nonisolated private final class ScreenRecordingWriter: @unchecked Sendable {
         videoInput = input
         pixelBufferAdaptor = adaptor
         self.outputURL = outputURL
+        self.mouseIndicatorStore = mouseIndicatorStore
         isSessionStarted = false
         sessionStartTime = nil
         isPaused = false
@@ -548,6 +588,10 @@ nonisolated private final class ScreenRecordingWriter: @unchecked Sendable {
 
             let adjustedPTS = adjustedTime(time)
             guard adjustedPTS >= .zero, videoInput.isReadyForMoreMediaData else { return }
+
+            if let snapshot = mouseIndicatorStore?.snapshot(at: adjustedPTS.seconds) {
+                RecordingMouseIndicatorRenderer.render(snapshot: snapshot, into: pixelBuffer)
+            }
 
             pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: adjustedPTS)
         }
@@ -644,6 +688,7 @@ nonisolated private final class ScreenRecordingWriter: @unchecked Sendable {
         videoInput = nil
         pixelBufferAdaptor = nil
         outputURL = nil
+        mouseIndicatorStore = nil
         isSessionStarted = false
         sessionStartTime = nil
         isPaused = false

@@ -1,27 +1,51 @@
-//
-//  SettingsPlaceholderPanes.swift
-//  OpenShot
-//
-
+import AppKit
 import SwiftUI
 
 struct VideoSettingsPane: View {
+    @AppStorage(OpenShotPreferences.showRecordingMouseIndicatorsKey) private var showMouseIndicators = true
+    @AppStorage(OpenShotPreferences.recordingMouseIndicatorColorKey) private var mouseIndicatorColor = OpenShotPreferences.defaultRecordingMouseIndicatorColor
+    @AppStorage(OpenShotPreferences.recordingMouseIndicatorSizeKey) private var mouseIndicatorSize = OpenShotPreferences.defaultRecordingMouseIndicatorSize
+
+    private var indicatorColor: Binding<Color> {
+        Binding(
+            get: {
+                Color(nsColor: NSColor(hexString: mouseIndicatorColor) ?? .systemBlue)
+            },
+            set: { color in
+                if let hexString = NSColor(color).hexRGBString {
+                    mouseIndicatorColor = hexString
+                }
+            }
+        )
+    }
+
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "video.fill")
-                .font(.system(size: 36))
-                .foregroundStyle(.tertiary)
+        SettingsPane {
+            SettingsSection {
+                SettingsRow("Mouse indicators:") {
+                    Toggle("Show clicks and drags while recording", isOn: $showMouseIndicators)
+                        .toggleStyle(.checkbox)
+                }
 
-            Text("Video Recording")
-                .font(.title3.weight(.medium))
+                SettingsRow("Color:") {
+                    ColorPicker("", selection: indicatorColor, supportsOpacity: false)
+                        .labelsHidden()
+                        .frame(width: 56)
+                }
 
-            Text("Video recording settings will appear here.\nConfigure frame rate, resolution, and output format.")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(2)
+                SettingsRow("Size:") {
+                    HStack(spacing: 12) {
+                        Slider(value: $mouseIndicatorSize, in: 24...96, step: 2)
+                            .frame(width: 220)
+
+                        Text("\(Int(mouseIndicatorSize)) pt")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(width: 46, alignment: .trailing)
+                    }
+                }
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -42,5 +66,31 @@ struct OverlaySettingsPane: View {
                 .lineSpacing(2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private extension NSColor {
+    convenience init?(hexString: String) {
+        let value = hexString.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard value.count == 6,
+              let integer = Int(value, radix: 16) else {
+            return nil
+        }
+
+        self.init(
+            srgbRed: CGFloat((integer >> 16) & 0xFF) / 255,
+            green: CGFloat((integer >> 8) & 0xFF) / 255,
+            blue: CGFloat(integer & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+
+    var hexRGBString: String? {
+        guard let color = usingColorSpace(.sRGB) else { return nil }
+
+        let red = Int(round(color.redComponent * 255))
+        let green = Int(round(color.greenComponent * 255))
+        let blue = Int(round(color.blueComponent * 255))
+        return String(format: "#%02X%02X%02X", red, green, blue)
     }
 }
