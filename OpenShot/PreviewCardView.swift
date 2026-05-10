@@ -35,6 +35,11 @@ struct PreviewCardView: View {
             .frame(width: previewCardSize.width, height: previewCardSize.height)
             .clipped()
             .overlay {
+                if item.kind == .video {
+                    videoPlayIndicator
+                }
+            }
+            .overlay {
                 if showOverlay {
                     hoveredContent
                 }
@@ -132,13 +137,6 @@ struct PreviewCardView: View {
 
             cloudUploadControl
 
-            if item.kind == .video {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 34, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92), .black.opacity(0.35))
-                    .shadow(color: .black.opacity(0.28), radius: 8, x: 0, y: 2)
-            }
-
             if cloudUploader.uploadingItems.contains(item.id) {
                 ProgressView(value: cloudUploader.uploadProgress[item.id] ?? 0)
                     .progressViewStyle(.linear)
@@ -152,6 +150,13 @@ struct PreviewCardView: View {
             }
         }
         .transition(.opacity)
+    }
+
+    private var videoPlayIndicator: some View {
+        Image(systemName: "play.circle.fill")
+            .font(.system(size: 34, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.92), .black.opacity(0.35))
+            .shadow(color: .black.opacity(0.28), radius: 8, x: 0, y: 2)
     }
 
     @ViewBuilder
