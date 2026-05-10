@@ -42,7 +42,13 @@ final class RecordingAreaSelectionPresenter {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
 
-        let selectionView = RecordingAreaSelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
+        let selectionView = RecordingAreaSelectionView(
+            frame: CGRect(origin: .zero, size: screen.frame.size),
+            pixelScale: CGSize(
+                width: CGFloat(display.width) / max(screen.frame.width, 1),
+                height: CGFloat(display.height) / max(screen.frame.height, 1)
+            )
+        )
         selectionView.onCancel = { [weak self] in
             self?.finish(rect: nil)
         }
@@ -99,12 +105,14 @@ private final class RecordingAreaSelectionView: NSView {
 
     private var startPoint: CGPoint?
     private var currentPoint: CGPoint?
+    private let pixelScale: CGSize
 
     override var acceptsFirstResponder: Bool {
         true
     }
 
-    override init(frame frameRect: NSRect) {
+    init(frame frameRect: NSRect, pixelScale: CGSize) {
+        self.pixelScale = pixelScale
         super.init(frame: frameRect)
         wantsLayer = true
     }
@@ -126,6 +134,16 @@ private final class RecordingAreaSelectionView: NSView {
         let border = NSBezierPath(roundedRect: selectionRect, xRadius: 4, yRadius: 4)
         border.lineWidth = 2
         border.stroke()
+
+        drawSelectionSize(for: selectionRect)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .annotationPlus)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.annotationPlus.set()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -158,6 +176,45 @@ private final class RecordingAreaSelectionView: NSView {
         }
     }
 
+    private func drawSelectionSize(for rect: CGRect) {
+        let pixelWidth = Int((rect.width * pixelScale.width).rounded())
+        let pixelHeight = Int((rect.height * pixelScale.height).rounded())
+        let label = "\(pixelWidth) x \(pixelHeight)"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
+            .foregroundColor: NSColor.white
+        ]
+        let attributedLabel = NSAttributedString(string: label, attributes: attributes)
+        let textSize = attributedLabel.size()
+        let padding = CGSize(width: 10, height: 6)
+        let badgeSize = CGSize(width: textSize.width + padding.width * 2, height: textSize.height + padding.height * 2)
+        let badgeOrigin = badgeOrigin(for: rect, size: badgeSize)
+        let badgeRect = CGRect(origin: badgeOrigin, size: badgeSize)
+
+        NSColor.black.withAlphaComponent(0.72).setFill()
+        NSBezierPath(roundedRect: badgeRect, xRadius: 7, yRadius: 7).fill()
+
+        attributedLabel.draw(
+            at: CGPoint(
+                x: badgeRect.minX + padding.width,
+                y: badgeRect.minY + padding.height
+            )
+        )
+    }
+
+    private func badgeOrigin(for rect: CGRect, size: CGSize) -> CGPoint {
+        let preferred = CGPoint(x: rect.minX, y: rect.minY - size.height - 8)
+        if bounds.contains(CGRect(origin: preferred, size: size)) {
+            return preferred
+        }
+
+        let fallbackY = min(rect.maxY + 8, bounds.maxY - size.height - 8)
+        return CGPoint(
+            x: min(max(rect.minX, bounds.minX + 8), bounds.maxX - size.width - 8),
+            y: max(fallbackY, bounds.minY + 8)
+        )
+    }
+
     private var selectionRect: CGRect? {
         guard let startPoint, let currentPoint else { return nil }
 
@@ -169,4 +226,3 @@ private final class RecordingAreaSelectionView: NSView {
         )
     }
 }
-
