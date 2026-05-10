@@ -15,6 +15,7 @@ final class RecordingAreaSelectionPresenter {
     private var panel: NSPanel?
     private var completion: ((CGRect?) -> Void)?
     private var display: SCDisplay?
+    private var keyMonitor: Any?
 
     private init() {}
 
@@ -41,6 +42,7 @@ final class RecordingAreaSelectionPresenter {
         panel.level = .screenSaver
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        panel.acceptsMouseMovedEvents = true
 
         let selectionView = RecordingAreaSelectionView(
             frame: CGRect(origin: .zero, size: screen.frame.size),
@@ -69,9 +71,11 @@ final class RecordingAreaSelectionPresenter {
 
         panel.contentView = selectionView
         panel.makeFirstResponder(selectionView)
-        panel.orderFrontRegardless()
-        selectionView.showSelectionCursor()
         self.panel = panel
+        installKeyMonitor()
+        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
+        selectionView.beginSelectionCursorSession()
     }
 
     func cancel() {
@@ -82,9 +86,28 @@ final class RecordingAreaSelectionPresenter {
         let completion = completion
         self.completion = nil
         display = nil
+        removeKeyMonitor()
+        (panel?.contentView as? RecordingAreaSelectionView)?.endSelectionCursorSession()
         panel?.orderOut(nil)
         panel = nil
         completion?(rect)
+    }
+
+    private func installKeyMonitor() {
+        removeKeyMonitor()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }
+
+            self?.finish(rect: nil)
+            return nil
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
     }
 }
 
@@ -101,6 +124,7 @@ private final class RecordingAreaSelectionView: NSView {
     private var startPoint: CGPoint?
     private var currentPoint: CGPoint?
     private let pixelScale: CGSize
+    private var didPushSelectionCursor = false
 
     override var acceptsFirstResponder: Bool {
         true
@@ -114,6 +138,10 @@ private final class RecordingAreaSelectionView: NSView {
 
     required init?(coder: NSCoder) {
         nil
+    }
+
+    deinit {
+        endSelectionCursorSession()
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -140,11 +168,15 @@ private final class RecordingAreaSelectionView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.invalidateCursorRects(for: self)
-        showSelectionCursor()
+        if window != nil {
+            beginSelectionCursorSession()
+        } else {
+            endSelectionCursorSession()
+        }
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        showSelectionCursor()
+        beginSelectionCursorSession()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -155,7 +187,7 @@ private final class RecordingAreaSelectionView: NSView {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        showSelectionCursor()
+        beginSelectionCursorSession()
         return true
     }
 
@@ -182,8 +214,20 @@ private final class RecordingAreaSelectionView: NSView {
         }
     }
 
-    func showSelectionCursor() {
-        NSCursor.annotationPlus.set()
+    func beginSelectionCursorSession() {
+        if didPushSelectionCursor {
+            NSCursor.annotationPlus.set()
+        } else {
+            NSCursor.annotationPlus.push()
+            didPushSelectionCursor = true
+        }
+    }
+
+    func endSelectionCursorSession() {
+        guard didPushSelectionCursor else { return }
+
+        NSCursor.pop()
+        didPushSelectionCursor = false
     }
 
     private func drawSelectionSize(for rect: CGRect) {
