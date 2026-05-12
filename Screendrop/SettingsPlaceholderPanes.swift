@@ -21,28 +21,39 @@ struct VideoSettingsPane: View {
     }
 
     var body: some View {
-        SettingsPane {
-            SettingsSection {
-                SettingsRow("Mouse indicators:") {
-                    Toggle("Show clicks and drags while recording", isOn: $showMouseIndicators)
-                        .toggleStyle(.checkbox)
+        Form {
+            Section("Recording Indicators") {
+                Toggle(isOn: $showMouseIndicators) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show mouse clicks and drags")
+                        Text("Displays a visual indicator when you click or drag during recording.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .toggleStyle(.switch)
 
-                SettingsRow("Key captions:") {
-                    Toggle("Show pressed keys while recording", isOn: $showKeyPressCaptions)
-                        .toggleStyle(.checkbox)
+                Toggle(isOn: $showKeyPressCaptions) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show key press captions")
+                        Text("Displays pressed keys as on-screen captions while recording.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .toggleStyle(.switch)
+            }
 
-                SettingsRow("Color:") {
+            Section("Indicator Appearance") {
+                LabeledContent("Color") {
                     ColorPicker("", selection: indicatorColor, supportsOpacity: false)
                         .labelsHidden()
-                        .frame(width: 56)
                 }
 
-                SettingsRow("Size:") {
+                LabeledContent("Size") {
                     HStack(spacing: 12) {
                         Slider(value: $mouseIndicatorSize, in: 24...96, step: 2)
-                            .frame(width: 220)
+                            .frame(width: 180)
 
                         Text("\(Int(mouseIndicatorSize)) pt")
                             .monospacedDigit()
@@ -52,30 +63,36 @@ struct VideoSettingsPane: View {
                 }
             }
         }
+        .formStyle(.grouped)
+        .contentMargins(.top, 8, for: .scrollContent)
     }
 }
 
 struct OverlaySettingsPane: View {
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "rectangle.on.rectangle")
-                .font(.system(size: 36))
-                .foregroundStyle(.tertiary)
+        Form {
+            Section("Preview Card") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label {
+                        Text("Overlay settings")
+                            .font(.system(size: 13, weight: .medium))
+                    } icon: {
+                        Image(systemName: "rectangle.on.rectangle")
+                            .foregroundStyle(.secondary)
+                    }
 
-            Text("Overlay")
-                .font(.title3.weight(.medium))
-
-            Text("Configure the preview card that appears\nafter taking a screenshot or recording.")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(2)
+                    Text("Configure the floating preview card that appears after taking a screenshot or recording. More options coming soon.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .formStyle(.grouped)
+        .contentMargins(.top, 8, for: .scrollContent)
     }
 }
 
-private extension NSColor {
+extension NSColor {
     convenience init?(hexString: String) {
         let value = hexString.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
         guard value.count == 6,

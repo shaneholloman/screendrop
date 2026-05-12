@@ -23,7 +23,6 @@ struct CloudSettingsPane: View {
 
     @State private var r2Status: ConnectionStatus = .unchecked
     @State private var workerStatus: ConnectionStatus = .unchecked
-    @State private var hasUnsavedChanges = false
     @State private var isLoading = true
 
     private var isR2Configured: Bool {
@@ -39,162 +38,103 @@ struct CloudSettingsPane: View {
     }
 
     var body: some View {
-        SettingsPane {
-            // MARK: - Status
-
-            SettingsSection {
-                SettingsRow("Status:") {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(overallStatusColor)
-                            .frame(width: 8, height: 8)
-
-                        Text(overallStatusText)
-                            .font(.system(size: 13))
-                            .foregroundStyle(isR2Configured && isWorkerConfigured ? .primary : .secondary)
-                    }
-                }
-            }
-
-            SettingsSectionDivider()
-
+        Form {
             // MARK: - R2 / S3 Credentials
 
-            SettingsSection {
-                SettingsRow("R2 Endpoint:") {
-                    TextField("https://<account_id>.r2.cloudflarestorage.com", text: $endpoint)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
-                        .onChange(of: endpoint) { markChanged() }
-                }
+            Section("R2 Storage") {
+                TextField("Endpoint", text: $endpoint, prompt: Text("https://<account_id>.r2.cloudflarestorage.com"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: endpoint) { fieldDidChange() }
 
-                SettingsRow("Bucket:") {
-                    TextField("my-screenshots", text: $bucket)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
-                        .onChange(of: bucket) { markChanged() }
-                }
+                TextField("Bucket", text: $bucket, prompt: Text("my-screenshots"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: bucket) { fieldDidChange() }
 
-                SettingsRow("Region:") {
-                    TextField("auto", text: $region)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
-                        .onChange(of: region) { markChanged() }
-                }
+                TextField("Region", text: $region, prompt: Text("auto"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: region) { fieldDidChange() }
 
-                SettingsRow("Access Key ID:") {
-                    SecureField("R2 access key ID", text: $accessKeyId)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
-                        .onChange(of: accessKeyId) { markChanged() }
-                }
+                SecureField("Access Key ID", text: $accessKeyId, prompt: Text("R2 access key ID"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: accessKeyId) { fieldDidChange() }
 
-                SettingsRow("Secret Key:") {
-                    SecureField("R2 secret access key", text: $secretAccessKey)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
-                        .onChange(of: secretAccessKey) { markChanged() }
-                }
+                SecureField("Secret Access Key", text: $secretAccessKey, prompt: Text("R2 secret access key"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: secretAccessKey) { fieldDidChange() }
 
-                SettingsRow("Public URL:") {
-                    TextField("https://cdn.example.com (optional)", text: $publicURLBase)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
-                        .onChange(of: publicURLBase) { markChanged() }
-                }
+                TextField("Public URL", text: $publicURLBase, prompt: Text("https://cdn.example.com (optional)"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: publicURLBase) { fieldDidChange() }
 
-                SettingsRow("") {
-                    HStack(spacing: 8) {
-                        Button("Test R2 Connection") {
-                            Task { await testR2Connection() }
-                        }
-                        .disabled(!isR2Configured)
-                        .controlSize(.small)
-
-                        connectionStatusIndicator(r2Status)
+                HStack(spacing: 8) {
+                    Button("Test Connection") {
+                        Task { await testR2Connection() }
                     }
+                    .controlSize(.small)
+                    .disabled(!isR2Configured)
+
+                    connectionStatusIndicator(r2Status)
                 }
             }
-
-            SettingsSectionDivider()
 
             // MARK: - Worker Configuration
 
-            SettingsSection {
-                SettingsRow("Worker URL:") {
-                    TextField("https://screendrop.your-name.workers.dev", text: $workerURL)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
-                        .onChange(of: workerURL) { markChanged() }
-                }
+            Section("Worker") {
+                TextField("Worker URL", text: $workerURL, prompt: Text("https://screendrop.your-name.workers.dev"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: workerURL) { fieldDidChange() }
 
-                SettingsRow("Upload Token:") {
-                    SecureField("Paste your shared token", text: $uploadToken)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
-                        .onChange(of: uploadToken) { markChanged() }
-                }
+                SecureField("Upload Token", text: $uploadToken, prompt: Text("Paste your shared token"))
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: uploadToken) { fieldDidChange() }
 
-                SettingsRow("") {
-                    HStack(spacing: 8) {
-                        Button("Test Worker") {
-                            Task { await testWorkerConnection() }
-                        }
-                        .disabled(!isWorkerConfigured)
-                        .controlSize(.small)
-
-                        connectionStatusIndicator(workerStatus)
+                HStack(spacing: 8) {
+                    Button("Test Worker") {
+                        Task { await testWorkerConnection() }
                     }
-                }
-            }
+                    .controlSize(.small)
+                    .disabled(!isWorkerConfigured)
 
-            SettingsSectionDivider()
-
-            // MARK: - Save
-
-            SettingsSection {
-                SettingsRow("") {
-                    HStack(spacing: 12) {
-                        Button("Save") {
-                            saveSettings()
-                        }
-                        .controlSize(.small)
-                        .disabled(!hasUnsavedChanges)
-
-                        if hasUnsavedChanges {
-                            Text("Unsaved changes")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.orange)
-                        }
-                    }
+                    connectionStatusIndicator(workerStatus)
                 }
             }
 
             // MARK: - Setup Guide
 
             if !isR2Configured || !isWorkerConfigured {
-                SettingsSectionDivider()
-
-                SettingsSection {
-                    SettingsRow("Setup:") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            SetupStepView(number: 1, text: "Create an R2 bucket in Cloudflare dashboard")
-                            SetupStepView(number: 2, text: "Generate an R2 API token (S3 Auth) with read/write permissions")
-                            SetupStepView(number: 3, text: "Deploy the Screendrop worker to Cloudflare Workers")
-                            SetupStepView(number: 4, text: "Set UPLOAD_TOKEN secret: wrangler secret put UPLOAD_TOKEN")
-                            SetupStepView(number: 5, text: "Paste all credentials above and save")
-                        }
+                Section("Setup Guide") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SetupStepView(number: 1, text: "Create an R2 bucket in Cloudflare dashboard")
+                        SetupStepView(number: 2, text: "Generate an R2 API token (S3 Auth) with read/write permissions")
+                        SetupStepView(number: 3, text: "Deploy the Screendrop worker to Cloudflare Workers")
+                        SetupStepView(number: 4, text: "Set UPLOAD_TOKEN secret: wrangler secret put UPLOAD_TOKEN")
+                        SetupStepView(number: 5, text: "Paste all credentials above and save")
                     }
 
-                    SettingsRow("") {
-                        Button("View on GitHub") {
-                            if let url = URL(string: "https://github.com/fayazara/screendrop-worker") {
-                                NSWorkspace.shared.open(url)
-                            }
+                    Button("View on GitHub") {
+                        if let url = URL(string: "https://github.com/fayazara/screendrop-worker") {
+                            NSWorkspace.shared.open(url)
                         }
-                        .controlSize(.small)
                     }
+                    .controlSize(.small)
                 }
+            }
+        }
+        .formStyle(.grouped)
+        .contentMargins(.top, 8, for: .scrollContent)
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(overallStatusColor)
+                        .frame(width: 7, height: 7)
+
+                    Text(overallStatusText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
             }
         }
         .onAppear {
@@ -222,19 +162,16 @@ struct CloudSettingsPane: View {
         publicURLBase = store.publicURLBase
         workerURL = store.workerURL
         uploadToken = store.uploadToken
-        hasUnsavedChanges = false
-        // Delay clearing the flag so onChange handlers triggered by
-        // the assignments above are suppressed.
         DispatchQueue.main.async {
             isLoading = false
         }
     }
 
-    private func markChanged() {
+    private func fieldDidChange() {
         guard !isLoading else { return }
         r2Status = .unchecked
         workerStatus = .unchecked
-        hasUnsavedChanges = true
+        saveSettings()
     }
 
     private func saveSettings() {
@@ -246,13 +183,11 @@ struct CloudSettingsPane: View {
         store.publicURLBase = publicURLBase.trimmingCharacters(in: .whitespacesAndNewlines)
         store.workerURL = workerURL.trimmingCharacters(in: .whitespacesAndNewlines)
         store.uploadToken = uploadToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        hasUnsavedChanges = false
     }
 
     // MARK: - Connection Tests
 
     private func testR2Connection() async {
-        // Temporarily save so S3CloudService can use the credentials
         saveSettings()
         r2Status = .checking
 

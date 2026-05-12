@@ -10,20 +10,9 @@ struct GeneralSettingsPane: View {
     @AppStorage(ScreendropPreferences.exportDirectoryPathKey) private var exportDirectoryPath = ""
 
     var body: some View {
-        SettingsPane {
-            SettingsSection {
-                SettingsRow("Startup:") {
-                    Text("Launch at Login is managed in\nSystem Settings → General → Login Items")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.tertiary)
-                        .lineSpacing(2)
-                }
-            }
-
-            SettingsSectionDivider()
-
-            SettingsSection {
-                SettingsRow("Export location:") {
+        Form {
+            Section("Save Location") {
+                LabeledContent("Export folder") {
                     HStack(spacing: 8) {
                         Image(systemName: "folder.fill")
                             .foregroundStyle(.blue)
@@ -35,42 +24,45 @@ struct GeneralSettingsPane: View {
                             .truncationMode(.middle)
                             .foregroundStyle(.primary)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
-                    )
                 }
 
-                SettingsRow("") {
-                    HStack(spacing: 8) {
-                        Button("Choose Folder...") {
-                            chooseExportDirectory()
-                        }
-
-                        Button("Use Default") {
-                            exportDirectoryPath = ""
-                        }
-                        .disabled(exportDirectoryPath.isEmpty)
+                HStack(spacing: 8) {
+                    Button("Choose Folder...") {
+                        chooseExportDirectory()
                     }
                     .controlSize(.small)
+
+                    Button("Use Default") {
+                        exportDirectoryPath = ""
+                    }
+                    .controlSize(.small)
+                    .disabled(exportDirectoryPath.isEmpty)
                 }
             }
 
-            SettingsSectionDivider()
+            Section("System") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Launch at Login")
+                        .font(.system(size: 13))
 
-            SettingsSection {
-                SettingsRow("Desktop icons:") {
-                    Toggle("Hide while capturing", isOn: .constant(false))
-                        .toggleStyle(.checkbox)
+                    Text("Managed in System Settings \u{2192} General \u{2192} Login Items")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+
+                Toggle(isOn: .constant(false)) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hide desktop icons while capturing")
+                        Text("Temporarily hides desktop icons during screen capture.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
             }
         }
+        .formStyle(.grouped)
+        .contentMargins(.top, 8, for: .scrollContent)
     }
 
     private func chooseExportDirectory() {

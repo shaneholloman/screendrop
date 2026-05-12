@@ -22,17 +22,69 @@ struct SettingsAboutPane: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 72, height: 72)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // App identity
+                HStack(alignment: .center, spacing: 16) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 72, height: 72)
 
-            Text("Screendrop")
-                .font(.title2.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Screendrop")
+                            .font(.largeTitle.bold())
 
-            Text(versionText)
-                .foregroundStyle(.secondary)
+                        Text(versionText)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        Text("A native screenshot and recording tool for macOS.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Divider()
+
+                // Project
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Project")
+                        .font(.headline)
+
+                    Text("Screendrop is a lightweight menu bar app for capturing screenshots and screen recordings on macOS.")
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 10) {
+                        Link("GitHub", destination: URL(string: "https://github.com/fayazara/screendrop")!)
+                    }
+                    .controlSize(.small)
+                }
+
+                Divider()
+
+                // Credits
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Credits")
+                        .font(.headline)
+
+                    Text("Built by Fayaz Ahmed")
+                        .foregroundStyle(.secondary)
+
+                    Link(destination: URL(string: "https://x.com/fayazara")!) {
+                        HStack(spacing: 4) {
+                            Text("Follow on Twitter")
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 520, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentMargins(.top, 8, for: .scrollContent)
     }
 }

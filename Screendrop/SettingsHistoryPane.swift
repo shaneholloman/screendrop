@@ -13,26 +13,6 @@ struct SettingsHistoryPane: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("History")
-                            .font(.title3.weight(.semibold))
-
-                        Text("\(historyStore.items.count) captures")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    Button {
-                        historyStore.reload()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .help("Refresh history")
-                }
-
                 if historyStore.items.isEmpty {
                     ContentUnavailableView(
                         "No Captures",
@@ -41,6 +21,10 @@ struct SettingsHistoryPane: View {
                     )
                     .frame(maxWidth: .infinity, minHeight: 360)
                 } else {
+                    Text("\(historyStore.items.count) capture\(historyStore.items.count == 1 ? "" : "s")")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
                     LazyVStack(spacing: 0) {
                         ForEach(historyStore.items) { item in
                             SettingsHistoryItemRow(
@@ -81,19 +65,29 @@ struct SettingsHistoryPane: View {
                         }
                     }
                     .background {
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(.quaternary.opacity(0.12))
                     }
                     .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(.separator.opacity(0.35), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
                     }
                 }
             }
-            .frame(maxWidth: 610, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 18)
+            .frame(maxWidth: 560, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
             .frame(maxWidth: .infinity)
+        }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    historyStore.reload()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .help("Refresh history")
+            }
         }
         .onAppear {
             historyStore.reload()
@@ -125,9 +119,11 @@ private struct SettingsHistoryItemRow: View {
 
     @State private var thumbnail: NSImage?
     @State private var cloudUploader = CloudUploader.shared
+    @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 14) {
+            // Thumbnail
             Group {
                 if let thumbnail {
                     Image(nsImage: thumbnail)
@@ -153,6 +149,7 @@ private struct SettingsHistoryItemRow: View {
                 }
             }
 
+            // File info
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.fileName)
                     .font(.system(size: 13, weight: .medium))
@@ -165,9 +162,10 @@ private struct SettingsHistoryItemRow: View {
                     .monospacedDigit()
             }
 
-            Spacer(minLength: 16)
+            Spacer(minLength: 12)
 
-            HStack(spacing: 8) {
+            // Inline actions (visible on hover)
+            HStack(spacing: 2) {
                 if item.cloudURL != nil {
                     Button(action: copyCloudURL) {
                         Image(systemName: "link")
@@ -177,10 +175,10 @@ private struct SettingsHistoryItemRow: View {
                     if cloudUploader.uploadingItems.contains(item.id) {
                         ProgressView()
                             .controlSize(.small)
-                            .frame(width: 16, height: 16)
+                            .frame(width: 20, height: 20)
                     } else {
                         Button(action: onUpload) {
-                            Image(systemName: "square.and.arrow.up")
+                            Image(systemName: "icloud.and.arrow.up")
                         }
                         .help("Upload to cloud")
                     }
@@ -189,33 +187,41 @@ private struct SettingsHistoryItemRow: View {
                 Button(action: onPreview) {
                     Image(systemName: "eye")
                 }
-                .help("Preview")
+                .help("Quick Look")
 
                 Button(action: onCopy) {
                     Image(systemName: "doc.on.doc")
                 }
                 .help("Copy")
-
-                Button(action: onEdit) {
-                    Image(systemName: item.isVideo ? "scissors" : "pencil")
-                }
-                .help(item.isVideo ? "Edit recording" : "Annotate")
-
-                Button(action: onReveal) {
-                    Image(systemName: "finder")
-                }
-                .help("Reveal in Finder")
-
-                Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "trash")
-                }
-                .help("Delete")
             }
             .buttonStyle(.borderless)
-            .controlSize(.large)
+            .imageScale(.medium)
+            .opacity(isHovering ? 1 : 0)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+        .contextMenu {
+            Button("Quick Look", systemImage: "eye") { onPreview() }
+            Button("Copy", systemImage: "doc.on.doc") { onCopy() }
+            Button(item.isVideo ? "Edit Recording" : "Annotate", systemImage: item.isVideo ? "scissors" : "pencil.tip.crop.circle") { onEdit() }
+
+            Divider()
+
+            if item.cloudURL != nil {
+                Button("Copy Cloud Link", systemImage: "link") { copyCloudURL() }
+            } else if cloudUploader.isConfigured && !cloudUploader.uploadingItems.contains(item.id) {
+                Button("Upload to Cloud", systemImage: "icloud.and.arrow.up") { onUpload() }
+            }
+
+            Button("Reveal in Finder", systemImage: "folder") { onReveal() }
+
+            Divider()
+
+            Button("Delete", systemImage: "trash", role: .destructive) { onDelete() }
+        }
         .task(id: item.fileName) {
             let url = item.url
             let isVideo = item.isVideo
@@ -241,11 +247,11 @@ private struct SettingsHistoryItemRow: View {
         if item.isVideo {
             let durationStr = item.duration.map { formatDuration($0) } ?? "unknown"
             if item.pixelWidth > 0 && item.pixelHeight > 0 {
-                return "\(date) - \(item.pixelWidth)x\(item.pixelHeight) - \(durationStr)"
+                return "\(date) \u{00B7} \(item.pixelWidth)\u{00D7}\(item.pixelHeight) \u{00B7} \(durationStr)"
             }
-            return "\(date) - \(durationStr)"
+            return "\(date) \u{00B7} \(durationStr)"
         }
-        return "\(date) - \(item.pixelWidth)x\(item.pixelHeight)"
+        return "\(date) \u{00B7} \(item.pixelWidth)\u{00D7}\(item.pixelHeight)"
     }
 
     private func formatDuration(_ seconds: Double) -> String {

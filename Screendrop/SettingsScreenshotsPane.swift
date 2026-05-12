@@ -23,40 +23,44 @@ struct ScreenshotsSettingsPane: View {
     }
 
     var body: some View {
-        SettingsPane {
-            SettingsSection {
-                SettingsRow("After capture:") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Toggle("Auto save captures", isOn: $autoSave)
-                            .toggleStyle(.checkbox)
-                        Toggle("Copy to clipboard", isOn: $autoCopy)
-                            .toggleStyle(.checkbox)
+        Form {
+            Section("After Capture") {
+                Toggle(isOn: $autoSave) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Auto save captures")
+                        Text("Automatically save screenshots to the export folder.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
+                .toggleStyle(.switch)
+
+                Toggle(isOn: $autoCopy) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Copy to clipboard")
+                        Text("Automatically copy the captured image to your clipboard.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
             }
 
-            SettingsSectionDivider()
-
-            SettingsSection {
-                SettingsRow("File format:") {
-                    Picker("", selection: Binding(
-                        get: { exportFormat },
-                        set: { exportFormat = $0 }
-                    )) {
-                        ForEach(ScreenshotExportFormat.allCases) { format in
-                            Text(format.title).tag(format)
-                        }
+            Section("File Format") {
+                Picker("Format", selection: Binding(
+                    get: { exportFormat },
+                    set: { exportFormat = $0 }
+                )) {
+                    ForEach(ScreenshotExportFormat.allCases) { format in
+                        Text(format.title).tag(format)
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 140)
                 }
 
                 if exportFormat.usesLossyQuality {
-                    SettingsRow("Quality:") {
+                    LabeledContent("Compression quality") {
                         HStack(spacing: 12) {
                             Slider(value: $compressionQuality, in: 0.1...1, step: 0.05)
-                                .frame(width: 200)
+                                .frame(width: 180)
 
                             Text(compressionQuality, format: .percent.precision(.fractionLength(0)))
                                 .monospacedDigit()
@@ -64,8 +68,14 @@ struct ScreenshotsSettingsPane: View {
                                 .frame(width: 40, alignment: .trailing)
                         }
                     }
+
+                    Text("Lower values produce smaller files with reduced image quality.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
+        .formStyle(.grouped)
+        .contentMargins(.top, 8, for: .scrollContent)
     }
 }
