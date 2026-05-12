@@ -4,10 +4,20 @@
 //
 
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 struct GeneralSettingsPane: View {
     @AppStorage(ScreendropPreferences.exportDirectoryPathKey) private var exportDirectoryPath = ""
+    @State private var launchAtLoginStatus = LaunchAtLoginController.status
+    @State private var launchAtLoginError: String?
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLoginStatus.isEnabled },
+            set: updateLaunchAtLogin
+        )
+    }
 
     var body: some View {
         Form {
@@ -41,28 +51,32 @@ struct GeneralSettingsPane: View {
             }
 
             Section("System") {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Launch at Login")
-                        .font(.system(size: 13))
-
-                    Text("Managed in System Settings \u{2192} General \u{2192} Login Items")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Toggle(isOn: .constant(false)) {
+                Toggle(isOn: launchAtLoginBinding) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Hide desktop icons while capturing")
-                        Text("Temporarily hides desktop icons during screen capture.")
+                        Text("Launch at Login")
+                        Text("Start Screendrop automatically when you sign in.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
                 .toggleStyle(.switch)
+
+                if let launchAtLoginError {
+                    Text(launchAtLoginError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else if launchAtLoginStatus.requiresApproval {
+                    Text("Approve Screendrop in System Settings → General → Login Items.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
         .contentMargins(.top, 8, for: .scrollContent)
+        .onAppear {
+            refreshLaunchAtLoginStatus()
+        }
     }
 
     private func chooseExportDirectory() {
@@ -81,5 +95,62 @@ struct GeneralSettingsPane: View {
         }
 
         exportDirectoryPath = url.path
+    }
+
+    private func refreshLaunchAtLoginStatus() {
+        launchAtLoginStatus = LaunchAtLoginController.status
+    }
+
+    private func updateLaunchAtLogin(_ isEnabled: Bool) {
+        do {
+            launchAtLoginError = nil
+            try LaunchAtLoginController.setEnabled(isEnabled)
+        } catch {
+            launchAtLoginError = "Could not update Launch at Login: \(error.localizedDescription)"
+        }
+
+        refreshLaunchAtLoginStatus()
+    }
+}
+
+private enum LaunchAtLoginStatus {
+    case disabled
+    case enabled
+    case requiresApproval
+
+    var isEnabled: Bool {
+        self == .enabled
+    }
+
+    var requiresApproval: Bool {
+        self == .requiresApproval
+    }
+}
+
+@MainActor
+private enum LaunchAtLoginController {
+    static var status: LaunchAtLoginStatus {
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            .enabled
+        case .requiresApproval:
+            .requiresApproval
+        case .notRegistered, .notFound:
+            .disabled
+        @unknown default:
+            .disabled
+        }
+    }
+
+    static func setEnabled(_ isEnabled: Bool) throws {
+        let service = SMAppService.mainApp
+
+        if isEnabled {
+            guard service.status != .enabled else { return }
+            try service.register()
+        } else {
+            guard service.status != .notRegistered else { return }
+            try service.unregister()
+        }
     }
 }
