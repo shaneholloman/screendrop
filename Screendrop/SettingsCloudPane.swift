@@ -41,7 +41,7 @@ struct CloudSettingsPane: View {
         Form {
             // MARK: - R2 / S3 Credentials
 
-            Section("R2 Storage") {
+            Section("R2/S3 Storage") {
                 TextField("Endpoint", text: $endpoint, prompt: Text("https://<account_id>.r2.cloudflarestorage.com"))
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: endpoint) { fieldDidChange() }

@@ -32,11 +32,11 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .general: "gearshape"
-        case .screenshots: "camera.viewfinder"
+        case .screenshots: "photo.on.rectangle.angled"
         case .video: "video"
-        case .overlay: "rectangle.on.rectangle"
-        case .cloud: "cloud"
-        case .history: "clock.arrow.circlepath"
+        case .overlay: "square.on.square"
+        case .cloud: "arrow.up.circle"
+        case .history: "clock.arrow.trianglehead.counterclockwise.rotate.90"
         case .about: "info.circle"
         }
     }
