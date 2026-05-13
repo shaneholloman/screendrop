@@ -8,6 +8,7 @@
 //
 
 import AppKit
+import AVKit
 import SwiftUI
 
 struct CloudSettingsPane: View {
@@ -39,7 +40,7 @@ struct CloudSettingsPane: View {
                     .onChange(of: uploadToken) { fieldDidChange() }
 
                 HStack(spacing: 8) {
-                    Button("Test Connection") {
+                    Button("Verify Connection") {
                         Task { await testWorkerConnection() }
                     }
                     .controlSize(.small)
@@ -52,20 +53,28 @@ struct CloudSettingsPane: View {
             // MARK: - Setup Guide
 
             if !isWorkerConfigured {
-                Section("Setup Guide") {
+                Section {
                     VStack(alignment: .leading, spacing: 10) {
-                        SetupStepView(number: 1, text: "Deploy the Screendrop worker to Cloudflare Workers")
-                        SetupStepView(number: 2, text: "Set UPLOAD_TOKEN secret: wrangler secret put UPLOAD_TOKEN")
-                        SetupStepView(number: 3, text: "Set R2 credentials as secrets (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY)")
+                        SetupStepView(number: 1, text: "Create an R2 bucket in your Cloudflare dashboard")
+                        SetupStepView(number: 2, text: "Deploy the Screendrop worker to Cloudflare Workers")
+                        SetupStepView(number: 3, text: "Set UPLOAD_TOKEN secret: wrangler secret put UPLOAD_TOKEN")
                         SetupStepView(number: 4, text: "Paste your worker URL and upload token above")
                     }
 
-                    Button("View on GitHub") {
-                        if let url = URL(string: "https://github.com/fayazara/screendrop-worker") {
-                            NSWorkspace.shared.open(url)
+                    SetupVideoPlayer()
+                        .frame(height: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                } header: {
+                    HStack {
+                        Text("Setup Guide")
+                        Spacer()
+                        Button("View on GitHub") {
+                            if let url = URL(string: "https://github.com/fayazara/screendrop-worker") {
+                                NSWorkspace.shared.open(url)
+                            }
                         }
+                        .controlSize(.small)
                     }
-                    .controlSize(.small)
                 }
             }
         }
@@ -234,4 +243,19 @@ private struct SetupStepView: View {
                 .lineSpacing(2)
         }
     }
+}
+
+private struct SetupVideoPlayer: NSViewRepresentable {
+    private static let videoURL = URL(string: "https://static.fayazahmed.com/EE7DB82C-screendrop-setup.mp4")!
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let player = AVPlayer(url: Self.videoURL)
+        let playerView = AVPlayerView()
+        playerView.player = player
+        playerView.controlsStyle = .inline
+        playerView.showsFullScreenToggleButton = true
+        return playerView
+    }
+
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {}
 }
