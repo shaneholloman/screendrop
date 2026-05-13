@@ -2,13 +2,14 @@
 //  CloudUploader.swift
 //  Screendrop
 //
-//  Uploads screenshots to R2 directly via S3 API, then registers metadata
-//  with the Screendrop Cloud worker for shareable URLs.
+//  Uploads screenshots to R2 via the Screendrop Cloud worker.
 //
 //  Flow:
-//  1. PUT file to R2 using S3CloudService (AWS Sig V4, no size limit)
-//  2. POST /api/register to the Hono worker with the R2 key + metadata
-//  3. Worker inserts into D1, returns the shareable short URL
+//  1. PUT /api/upload with the raw file body + metadata headers
+//  2. Worker streams the body directly to R2 via binding (no buffering)
+//  3. Worker creates the D1 metadata row, returns the shareable short URL
+//
+//  The user only needs a worker URL and upload token — no S3 credentials.
 //
 
 import AppKit
@@ -49,7 +50,7 @@ final class CloudUploader: NSObject {
     }
 
     var isConfigured: Bool {
-        CloudCredentialStore.shared.isFullyConfigured
+        CloudCredentialStore.shared.isConfigured
     }
 
     func upload(itemID: UUID, fileURL: URL) async throws -> CloudUploadResult {
@@ -74,44 +75,24 @@ final class CloudUploader: NSObject {
             duration = nil
         }
 
-        // Generate the R2 key in the same format the worker uses
-        let shortID = UUID().uuidString.split(separator: "-").first.map(String.init) ?? UUID().uuidString.prefix(8).description
-        let r2Key = "uploads/\(shortID)/\(fileName)"
-
         uploadingItems.insert(itemID)
         uploadProgress[itemID] = 0
 
         let uploadTask = Task { [weak self] () throws -> CloudUploadResult in
-            // Phase 1: Upload directly to R2 via S3 API (0% → 80%)
-            let _ = try await S3CloudService.shared.upload(
-                fileURL: fileURL,
-                r2Key: r2Key,
-                progress: { [weak self] fraction in
-                    Task { @MainActor [weak self] in
-                        self?.uploadProgress[itemID] = fraction * 0.8
-                    }
-                }
-            )
-
-            try Task.checkCancellation()
-
-            await MainActor.run { [weak self] in
-                self?.uploadProgress[itemID] = 0.85
-            }
-
-            // Phase 2: Register metadata with the worker (80% → 100%)
-            guard let self else { throw CloudUploadError.invalidResponse }
-
-            let result = try await self.registerWithWorker(
-                r2Key: r2Key,
+            let result = try await Self.streamUpload(
+                data: fileData,
                 filename: fileName,
                 contentType: mimeType,
-                size: fileData.count,
+                mediaType: isVideo ? "video" : "image",
                 width: dimensions?.width,
                 height: dimensions?.height,
-                mediaType: isVideo ? "video" : "image",
                 duration: duration,
-                creds: creds
+                creds: creds,
+                progress: { [weak self] fraction in
+                    Task { @MainActor [weak self] in
+                        self?.uploadProgress[itemID] = fraction
+                    }
+                }
             )
 
             return result
@@ -158,74 +139,81 @@ final class CloudUploader: NSObject {
         failedItemIDs.remove(itemID)
     }
 
-    // MARK: - Worker Registration
+    // MARK: - Streaming Upload
 
-    /// Calls POST /api/register on the worker to create the D1 metadata row.
-    nonisolated private func registerWithWorker(
-        r2Key: String,
+    /// Sends the raw file bytes as the request body to PUT /api/upload.
+    /// Metadata (filename, dimensions, etc.) is passed via headers so the
+    /// Worker can stream the body directly to R2 without buffering.
+    nonisolated private static func streamUpload(
+        data: Data,
         filename: String,
         contentType: String,
-        size: Int,
+        mediaType: String,
         width: Int?,
         height: Int?,
-        mediaType: String = "image",
-        duration: Double? = nil,
-        creds: CloudCredentials
+        duration: Double?,
+        creds: CloudCredentials,
+        progress: (@Sendable (Double) -> Void)?
     ) async throws -> CloudUploadResult {
-        let rawURL = creds.workerURL
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let workerBase = rawURL.lowercased().hasPrefix("http") ? rawURL : "https://\(rawURL)"
-        let token = creds.uploadToken
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let workerBase = normalizeWorkerURL(creds.workerURL)
+        let token = creds.uploadToken.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let registerURL = URL(string: "\(workerBase)/api/register") else {
+        guard let url = URL(string: "\(workerBase)/api/upload") else {
             throw CloudUploadError.invalidURL
         }
 
-        var body: [String: Any] = [
-            "r2_key": r2Key,
-            "filename": filename,
-            "content_type": contentType,
-            "size": size,
-            "media_type": mediaType,
-        ]
-        if let width { body["width"] = width }
-        if let height { body["height"] = height }
-        if let duration { body["duration"] = duration }
-
-        let jsonData = try JSONSerialization.data(withJSONObject: body)
-
-        var request = URLRequest(url: registerURL)
-        request.httpMethod = "POST"
-        request.httpBody = jsonData
-        request.timeoutInterval = 30
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 300
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue(filename, forHTTPHeaderField: "X-Filename")
+        request.setValue(mediaType, forHTTPHeaderField: "X-Media-Type")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        if let width { request.setValue(String(width), forHTTPHeaderField: "X-Width") }
+        if let height { request.setValue(String(height), forHTTPHeaderField: "X-Height") }
+        if let duration { request.setValue(String(duration), forHTTPHeaderField: "X-Duration") }
+
+        let progressDelegate = UploadProgressDelegate { sent, expected in
+            guard expected > 0 else { return }
+            progress?(min(1, Double(sent) / Double(expected)))
+        }
+
+        let (responseData, response) = try await URLSession.shared.upload(
+            for: request,
+            from: data,
+            delegate: progressDelegate
+        )
 
         guard let http = response as? HTTPURLResponse else {
             throw CloudUploadError.invalidResponse
         }
 
         guard http.statusCode == 201 else {
-            let responseBody = String(data: data, encoding: .utf8) ?? ""
-            throw CloudUploadError.serverError(http.statusCode, responseBody)
+            let body = String(data: responseData, encoding: .utf8) ?? ""
+            throw CloudUploadError.serverError(http.statusCode, body)
         }
 
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
         guard let id = json?["id"] as? String,
-              let url = json?["url"] as? String,
+              let shareURL = json?["url"] as? String,
               let name = json?["filename"] as? String,
               let fileSize = json?["size"] as? Int else {
             throw CloudUploadError.invalidResponse
         }
 
-        return CloudUploadResult(id: id, url: url, filename: name, size: fileSize)
+        progress?(1)
+        return CloudUploadResult(id: id, url: shareURL, filename: name, size: fileSize)
     }
 
     // MARK: - Helpers
+
+    nonisolated private static func normalizeWorkerURL(_ raw: String) -> String {
+        let trimmed = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return trimmed.lowercased().hasPrefix("http") ? trimmed : "https://\(trimmed)"
+    }
 
     private func mimeTypeForFile(_ url: URL) -> String {
         let ext = url.pathExtension.lowercased()
@@ -280,6 +268,26 @@ final class CloudUploader: NSObject {
     }
 }
 
+// MARK: - Upload Progress Delegate
+
+private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    private let onProgress: @Sendable (Int64, Int64) -> Void
+
+    init(onProgress: @escaping @Sendable (Int64, Int64) -> Void) {
+        self.onProgress = onProgress
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didSendBodyData bytesSent: Int64,
+        totalBytesSent: Int64,
+        totalBytesExpectedToSend: Int64
+    ) {
+        onProgress(totalBytesSent, totalBytesExpectedToSend)
+    }
+}
+
 // MARK: - Errors
 
 enum CloudUploadError: LocalizedError {
@@ -292,7 +300,7 @@ enum CloudUploadError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            "Cloud upload is not configured. Set R2 credentials and worker URL in Settings."
+            "Cloud upload is not configured. Set your worker URL and upload token in Settings."
         case .invalidURL:
             "Invalid worker URL."
         case .networkError(let error):

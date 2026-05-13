@@ -99,9 +99,9 @@ enum ScreendropPreferences {
         CloudCredentialStore.shared.uploadToken
     }
     
-    /// Cloud upload is available when both S3 credentials and the worker are configured.
+    /// Cloud upload is available when the worker URL and upload token are configured.
     static var isCloudConfigured: Bool {
-        CloudCredentialStore.shared.isFullyConfigured
+        CloudCredentialStore.shared.isConfigured
     }
 }
 
