@@ -1,14 +1,16 @@
 # Screendrop
 
-> **Beta** -- Screendrop is under active development. Expect rough edges, missing features, and breaking changes between releases. Feedback and bug reports are welcome via [GitHub Issues](https://github.com/fayazara/Screendrop/issues).
+> [!IMPORTANT]
+> **Beta** - Screendrop is under active development. Expect rough edges, missing features, and breaking changes between releases. Feedback and bug reports are welcome via [GitHub Issues](https://github.com/fayazara/Screendrop/issues).
 
-<p align="center">
+<p>
+  <br/>
   <a href="https://github.com/fayazara/Screendrop/releases/latest/download/Screendrop.dmg">
     <img src="download-button.png" alt="Download the latest version of Screendrop" width="220">
   </a>
 </p>
 
-<p align="center">
+<p>
   <a href="https://github.com/fayazara/Screendrop/releases/latest">Latest release</a>
   ·
   <a href="https://github.com/fayazara/Screendrop/releases">All releases</a>
